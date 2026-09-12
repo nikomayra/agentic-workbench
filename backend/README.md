@@ -1,17 +1,38 @@
-# Backend Reference
+# Backend Requirements
 
-## Runtime Assumptions
+## Runtime
 
-- The target is `fixtures/sample_repo`, with a Git `main` branch and `README.md`.
-- Generated worktrees live in `fixtures/.agent_worktrees`.
-- Tests expect `<target>/backend` and run with `uv run pytest -q`.
-- Run the MCP Inspector from `backend/` with `uv run mcp dev run_mcp.py`.
+- Python 3.14 with [`uv`](https://docs.astral.sh/uv/)
+- PostgreSQL and Redis
+- Git and `rg` (ripgrep) available to worker processes
+- A writable target Git repository with a configured base branch
 
-## Known Limitations
+## Environment
 
-- Repository commands run directly on the host; untrusted repositories need sandboxing.
-- The target repository and test command are not configurable through the API.
-- Workstream paths are planning guidance, not enforced file-level permissions.
-- Process crashes can leave workflow records or temporary Git resources behind.
-- Final results remain local; no branch publication or pull request is created.
-- Terminal workflow state retains paths to worktrees that cleanup has removed.
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Async PostgreSQL connection |
+| `REDIS_URL` | Celery broker/result connection |
+| `OPENAI_API_KEY` | Agent model access |
+| `GITHUB_TOKEN` | Issue intake and draft pull-request publication |
+| `CORS_ORIGINS` | Allowed frontend origins |
+
+The selected repository must define an allowed test command. The bundled fixture uses `backend/` with `uv run pytest -q`; generated worktrees are stored outside the target checkout and are removed at terminal workflow states.
+
+## Commands
+
+```bash
+uv sync
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload
+uv run pytest
+uv run ruff check .
+```
+
+Docker Compose starts the Redis-backed Celery worker alongside the API. Inspect the repository MCP server with `uv run mcp dev run_mcp.py`.
+
+## Constraints
+
+- Repository commands require an execution sandbox before accepting arbitrary untrusted code.
+- Workstream paths guide decomposition but do not replace worktree isolation or merge-conflict handling.
+- PostgreSQL is the durable source of workflow state; Redis and SSE must not be treated as persistence.
