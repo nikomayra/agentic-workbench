@@ -1,0 +1,19 @@
+[project]
+name = "sample-app"
+version = "0.1.0"
+description = "Small reservations CRUD app used as a sandbox target repo for agent tools"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "httpx2",
+]
+
+[tool.uv]
+package = false

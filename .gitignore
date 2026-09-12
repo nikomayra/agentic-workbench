@@ -1,0 +1,28 @@
+# Env
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Editors / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+
+# Docker
+postgres_data/
+
+
+/fixtures/sample_repo/.git/
+/fixtures/.agent_worktrees/

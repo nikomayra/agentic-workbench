@@ -1,0 +1,29 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Agentic workbench backend"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy[asyncio]",
+    "alembic",
+    "psycopg[binary]",
+    "pydantic-settings",
+    "openai-agents>=0.21.0",
+    "mcp[cli]>=2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "httpx2",
+    "ruff",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff.lint]
+ignore = ["B008"]
+
