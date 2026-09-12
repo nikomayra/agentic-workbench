@@ -6,11 +6,7 @@ It combines LLM judgment with deterministic orchestration: agents plan, implemen
 
 ## Interface
 
-<!-- Replace this comment with one GitHub-hosted dashboard image.
-<p align="center">
-  <img src="PASTE_GITHUB_ASSET_URL_HERE" alt="Agentic Workbench dashboard" width="900">
-</p>
--->
+<img width="900" alt="AW" src="https://github.com/user-attachments/assets/255767c5-77ee-4703-babe-901ea5cc4102" />
 
 ## Workflow
 
