@@ -36,6 +36,7 @@ def run_tests(trusted_root: Path) -> TestsOutcome:
 @dataclass(frozen=True)
 class GitDiffOutcome:
     output: str
+    changed_paths: tuple[Path, ...] = ()
 
 
 def git_diff(trusted_root: Path) -> GitDiffOutcome:
@@ -49,7 +50,23 @@ def git_diff(trusted_root: Path) -> GitDiffOutcome:
         check=False,
     )
 
-    if result.returncode != 0:
-        raise RuntimeError("Bad return code", result.stderr)
+    paths = subprocess.run(
+        ["git", "diff", "main...HEAD", "--name-only", "--", "."],
+        cwd=trusted_root,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
 
-    return GitDiffOutcome(output=result.stdout if result.stdout else "No changes.")
+    if result.returncode != 0 or paths.returncode != 0:
+        raise RuntimeError("Bad return code", result.stderr or paths.stderr)
+
+    affected_files = tuple(
+        Path(line) for line in paths.stdout.splitlines() if line.strip()
+    )
+
+    return GitDiffOutcome(
+        output=result.stdout if result.stdout else "No changes.",
+        changed_paths=affected_files,
+    )

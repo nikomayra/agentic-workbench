@@ -27,3 +27,6 @@ package = false
 [tool.ruff.lint]
 ignore = ["B008"]
 
+[tool.pyright]
+venvPath = "."
+venv = ".venv"

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.agents.workers import WorkExecution
 from app.orchestration.worktrees import Worktree
-from app.schemas.schemas import ReviewOutput, Workstream
+from app.schemas.schemas import ApprovalRequest, ReviewOutput, Workstream
 
 
 class CoordinatorStages(StrEnum):
@@ -62,3 +62,29 @@ class CoordinatorExecution(BaseModel):
     integration_worktree: Worktree | None = None
     merge_conflict: MergeConflict | None = None
     review_findings: ReviewFindings | None = None
+
+
+def pending_approval_requests(
+    execution: CoordinatorExecution,
+) -> list[ApprovalRequest]:
+    """Return approvals from only the execution that caused the current pause."""
+    requests: list[ApprovalRequest] = []
+
+    if execution.stage == CoordinatorStages.AWAITING_APPROVALS:
+        for work_record in execution.work_records:
+            if work_record.work_execution:
+                requests.extend(work_record.work_execution.approval_requests)
+    elif (
+        execution.stage == CoordinatorStages.MERGE_REPAIR_AWAITING_APPROVALS
+        and execution.merge_conflict
+        and execution.merge_conflict.repair_execution
+    ):
+        requests.extend(execution.merge_conflict.repair_execution.approval_requests)
+    elif (
+        execution.stage == CoordinatorStages.REVIEW_FIX_AWAITING_APPROVALS
+        and execution.review_findings
+        and execution.review_findings.fix_execution
+    ):
+        requests.extend(execution.review_findings.fix_execution.approval_requests)
+
+    return requests

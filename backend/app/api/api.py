@@ -23,7 +23,11 @@ from app.orchestration.coordinator import (
     resume_coordinator,
     start_coordinator,
 )
-from app.orchestration.state import CoordinatorExecution, CoordinatorStages
+from app.orchestration.state import (
+    CoordinatorExecution,
+    CoordinatorStages,
+    pending_approval_requests,
+)
 from app.repository.operations import SAMPLE_REPOSITORY_ROOT
 from app.schemas.schemas import (
     ApprovalRejectRequest,
@@ -121,27 +125,8 @@ async def _save_coordinator_execution(
 
 
 def _extract_approvals(execution: CoordinatorExecution) -> list[ApprovalRequest]:
-    """Return approvals from only the execution that caused the current pause."""
-    requests: list[ApprovalRequest] = []
-
-    if execution.stage == CoordinatorStages.AWAITING_APPROVALS:
-        for work_record in execution.work_records:
-            if work_record.work_execution:
-                requests.extend(work_record.work_execution.approval_requests)
-    elif (
-        execution.stage == CoordinatorStages.MERGE_REPAIR_AWAITING_APPROVALS
-        and execution.merge_conflict
-        and execution.merge_conflict.repair_execution
-    ):
-        requests.extend(execution.merge_conflict.repair_execution.approval_requests)
-    elif (
-        execution.stage == CoordinatorStages.REVIEW_FIX_AWAITING_APPROVALS
-        and execution.review_findings
-        and execution.review_findings.fix_execution
-    ):
-        requests.extend(execution.review_findings.fix_execution.approval_requests)
-
-    return requests
+    """Compatibility wrapper for existing API tests and callers."""
+    return pending_approval_requests(execution)
 
 
 async def _continue_workflow(
@@ -304,6 +289,7 @@ async def _decide_approval(
             select(Approval).where(Approval.workflow_run_id == workflow_run.id)
         )
     ).all()
+
     resolutions = {
         item.call_id: ApprovalResolution(
             decision=item.decision,

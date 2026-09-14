@@ -1,0 +1,14 @@
+[
+  {
+    "id": "reservation-date-validation",
+    "objective": "Reject reservation creation when check_out is not later than check_in, and add backend tests for valid and invalid date ranges.",
+    "expected_path_prefixes": ["backend/app/", "backend/tests/"],
+    "forbidden_path_prefixes": ["frontend/", ".git/"]
+  },
+  {
+    "id": "reservation-status-filter",
+    "objective": "Add an optional status query parameter to GET /reservations that filters the returned reservations, and add backend tests for the filter.",
+    "expected_path_prefixes": ["backend/app/", "backend/tests/"],
+    "forbidden_path_prefixes": ["frontend/", ".git/"]
+  }
+]
