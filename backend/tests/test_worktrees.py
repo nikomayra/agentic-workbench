@@ -9,14 +9,7 @@ from app.orchestration.worktrees import (
     complete_merge_after_conflict,
     merge_worktree_changes,
 )
-
-
-def _worktree(name: str) -> Worktree:
-    return Worktree(
-        id=name,
-        branch=f"worker/{name}",
-        path=Path(f"/tmp/{name}"),
-    )
+from tests.factories import worktree
 
 
 def _command_result(
@@ -41,8 +34,8 @@ def test_merge_worktree_changes_returns_success(monkeypatch):
     )
 
     outcome = merge_worktree_changes(
-        _worktree("backend"),
-        _worktree("integration"),
+        worktree("backend"),
+        worktree("integration"),
     )
 
     assert outcome.conflicts is False
@@ -66,8 +59,8 @@ def test_merge_worktree_changes_returns_conflict_paths(monkeypatch):
     )
 
     outcome = merge_worktree_changes(
-        _worktree("backend"),
-        _worktree("integration"),
+        worktree("backend"),
+        worktree("integration"),
     )
 
     assert outcome.conflicts is True
@@ -92,8 +85,8 @@ def test_merge_worktree_changes_raises_for_non_conflict_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="fatal: invalid merge"):
         merge_worktree_changes(
-            _worktree("backend"),
-            _worktree("integration"),
+            worktree("backend"),
+            worktree("integration"),
         )
 
 

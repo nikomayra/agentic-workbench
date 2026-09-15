@@ -1,5 +1,4 @@
 import asyncio
-import uuid
 from pathlib import Path
 
 import app.orchestration.coordinator as coordinator_module
@@ -26,31 +25,21 @@ from app.orchestration.state import (
     CoordinatorExecution,
     CoordinatorStages,
     MergeConflict,
-    WorkRecord,
     WorkRecordStatus,
 )
 from app.orchestration.worktrees import MergeOutcome, Worktree
 from app.schemas.schemas import (
     ExecutionPlan,
-    Plan,
-    PlanStep,
     ReviewOutput,
     ReviewStatus,
     Workstream,
 )
-
-
-def sample_plan() -> Plan:
-    return Plan(
-        summary="Make the requested change.",
-        steps=[
-            PlanStep(
-                title="Implement change",
-                description="Update the relevant fixture file.",
-                acceptance_criteria="The requested behavior is present.",
-            )
-        ],
-    )
+from tests.factories import (
+    completed_work_record,
+    finalization_state,
+    merge_conflict_state,
+    sample_plan,
+)
 
 
 def test_identify_parallel_plans():
@@ -106,31 +95,9 @@ def test_overlapping_decomposition_falls_back_to_one_worker():
     assert result.workstreams[0].name == "full-plan"
 
 
-def _completed_work_record(name: str) -> WorkRecord:
-    return WorkRecord(
-        work_id=uuid.uuid4(),
-        status=WorkRecordStatus.NOT_MERGED,
-        workstream=Workstream(
-            name=name,
-            task=f"Complete {name} work",
-            intended_paths=[name],
-            acceptance_criteria=[f"{name} work is complete"],
-        ),
-        worktree=Worktree(
-            id=name,
-            branch=f"worker/{name}",
-            path=Path(f"/tmp/{name}"),
-        ),
-        work_execution=WorkExecution(
-            status=WorkExecutionStatus.COMPLETED,
-            output=WorkerOutput(work_notes=f"Completed {name}"),
-        ),
-    )
-
-
 def test_merge_stops_at_conflict_and_preserves_prior_progress(monkeypatch):
-    first_work = _completed_work_record("backend")
-    conflicting_work = _completed_work_record("frontend")
+    first_work = completed_work_record("backend")
+    conflicting_work = completed_work_record("frontend")
     integration_worktree = Worktree(
         id="integration",
         branch="worker/integration",
@@ -168,30 +135,6 @@ def test_merge_stops_at_conflict_and_preserves_prior_progress(monkeypatch):
     assert initial_state.work_records[0].status == WorkRecordStatus.NOT_MERGED
 
 
-def _merge_conflict_state(
-    repair_execution: WorkExecution | None = None,
-) -> CoordinatorExecution:
-    conflicting_work = _completed_work_record("frontend")
-    return CoordinatorExecution(
-        stage=(
-            CoordinatorStages.MERGE_REPAIR_AWAITING_APPROVALS
-            if repair_execution
-            else CoordinatorStages.MERGE_CONFLICT
-        ),
-        work_records=[conflicting_work],
-        integration_worktree=Worktree(
-            id="integration",
-            branch="worker/integration",
-            path=Path("/tmp/integration"),
-        ),
-        merge_conflict=MergeConflict(
-            work_id=conflicting_work.work_id,
-            file_paths=[Path("frontend/src/App.tsx")],
-            repair_execution=repair_execution,
-        ),
-    )
-
-
 def test_start_merge_conflict_repair_saves_pending_execution(monkeypatch):
     pending_execution = WorkExecution(
         status=WorkExecutionStatus.PENDING_APPROVAL,
@@ -205,7 +148,7 @@ def test_start_merge_conflict_repair_saves_pending_execution(monkeypatch):
 
     monkeypatch.setattr(coordinator_module, "invoke_worker", fake_invoke_worker)
 
-    result = asyncio.run(start_merge_conflict_repair(_merge_conflict_state()))
+    result = asyncio.run(start_merge_conflict_repair(merge_conflict_state()))
 
     assert result.stage == CoordinatorStages.MERGE_REPAIR_AWAITING_APPROVALS
     assert result.merge_conflict is not None
@@ -233,7 +176,7 @@ def test_resume_merge_conflict_repair_saves_completed_execution(monkeypatch):
 
     result = asyncio.run(
         resume_merge_conflict_repair(
-            _merge_conflict_state(pending_execution),
+            merge_conflict_state(pending_execution),
             {},
         )
     )
@@ -251,7 +194,7 @@ def test_complete_merge_conflict_repair_clears_conflict_state(monkeypatch):
         status=WorkExecutionStatus.COMPLETED,
         output=WorkerOutput(work_notes="Completed work_id_1"),
     )
-    conflicting_work = _completed_work_record("frontend")
+    conflicting_work = completed_work_record("frontend")
     repair_complete_state = CoordinatorExecution(
         stage=CoordinatorStages.MERGE_REPAIR_COMPLETED,
         work_records=[conflicting_work],
@@ -281,13 +224,13 @@ def test_complete_merge_conflict_repair_clears_conflict_state(monkeypatch):
 
 
 def test_merge_continues_with_only_unmerged_work(monkeypatch):
-    already_merged = _completed_work_record("backend").model_copy(
+    already_merged = completed_work_record("backend").model_copy(
         update={"status": WorkRecordStatus.MERGED}
     )
-    repaired_work = _completed_work_record("frontend").model_copy(
+    repaired_work = completed_work_record("frontend").model_copy(
         update={"status": WorkRecordStatus.MERGED}
     )
-    remaining_work = _completed_work_record("docs")
+    remaining_work = completed_work_record("docs")
     merged_worktree_ids = []
 
     def fake_merge(worktree, _integration_worktree):
@@ -316,7 +259,7 @@ def test_merge_continues_with_only_unmerged_work(monkeypatch):
 def test_failed_tests_cannot_reach_final_approval(monkeypatch):
     state = CoordinatorExecution(
         stage=CoordinatorStages.INTEGRATED,
-        work_records=[_completed_work_record("backend")],
+        work_records=[completed_work_record("backend")],
         integration_worktree=Worktree(
             id="integration",
             branch="worker/integration",
@@ -353,7 +296,7 @@ def test_failed_tests_cannot_reach_final_approval(monkeypatch):
 def test_dispatcher_stops_at_final_approval():
     state = CoordinatorExecution(
         stage=CoordinatorStages.AWAITING_FINAL_APPROVAL,
-        work_records=[_completed_work_record("backend")],
+        work_records=[completed_work_record("backend")],
         integration_worktree=Worktree(
             id="integration",
             branch="worker/integration",
@@ -368,7 +311,7 @@ def test_dispatcher_stops_at_final_approval():
 
 def test_dispatcher_advances_completed_work_to_final_approval(monkeypatch):
     transitions = []
-    work_records = [_completed_work_record("backend")]
+    work_records = [completed_work_record("backend")]
     integration_worktree = Worktree(
         id="integration",
         branch="worker/integration",
@@ -429,18 +372,6 @@ def test_dispatcher_advances_completed_work_to_final_approval(monkeypatch):
     assert result.stage == CoordinatorStages.AWAITING_FINAL_APPROVAL
 
 
-def _finalization_state() -> CoordinatorExecution:
-    return CoordinatorExecution(
-        stage=CoordinatorStages.AWAITING_FINAL_APPROVAL,
-        work_records=[_completed_work_record("backend")],
-        integration_worktree=Worktree(
-            id="integration",
-            branch="worker/integration",
-            path=Path("/tmp/integration"),
-        ),
-    )
-
-
 def test_approved_finalization_removes_checkouts_but_keeps_result_branch(monkeypatch):
     removed_checkouts: list[str] = []
     deleted_branches: list[str] = []
@@ -456,7 +387,7 @@ def test_approved_finalization_removes_checkouts_but_keeps_result_branch(monkeyp
         lambda worktree: deleted_branches.append(worktree.id),
     )
 
-    result = finalize_coordinator(_finalization_state(), approved=True)
+    result = finalize_coordinator(finalization_state(), approved=True)
 
     assert result.stage == CoordinatorStages.COMPLETED
     assert removed_checkouts == ["backend", "integration"]
@@ -478,7 +409,7 @@ def test_rejected_finalization_removes_checkouts_and_all_branches(monkeypatch):
         lambda worktree: deleted_branches.append(worktree.id),
     )
 
-    result = finalize_coordinator(_finalization_state(), approved=False)
+    result = finalize_coordinator(finalization_state(), approved=False)
 
     assert result.stage == CoordinatorStages.REJECTED
     assert removed_checkouts == ["backend", "integration"]

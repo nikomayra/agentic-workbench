@@ -31,7 +31,6 @@ from app.orchestration.state import (
 from app.repository.operations import SAMPLE_REPOSITORY_ROOT
 from app.schemas.schemas import (
     ApprovalRejectRequest,
-    ApprovalRequest,
     ApprovalResolution,
     ApprovalResponse,
     FinalApprovalRequest,
@@ -106,7 +105,7 @@ async def _save_coordinator_execution(
         )
 
     if workflow_run.status == WorkflowRunStatus.PendingToolApproval:
-        requests = _extract_approvals(execution)
+        requests = pending_approval_requests(execution)
         if not requests:
             raise RuntimeError("Paused coordinator has no approval requests.")
 
@@ -122,11 +121,6 @@ async def _save_coordinator_execution(
             )
 
     await db.commit()
-
-
-def _extract_approvals(execution: CoordinatorExecution) -> list[ApprovalRequest]:
-    """Compatibility wrapper for existing API tests and callers."""
-    return pending_approval_requests(execution)
 
 
 async def _continue_workflow(

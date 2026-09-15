@@ -49,10 +49,15 @@ def create_worktree(tree_id: str) -> Worktree:
     return worktree
 
 
-def remove_worktree_checkout(worktree: Worktree) -> None:
-    """Remove the temporary checkout while leaving its Git branch intact."""
+def remove_worktree_checkout(worktree: Worktree, force: bool = False) -> None:
+    """Remove a checkout, optionally discarding changes in disposable worktrees."""
+    command = ["git", "worktree", "remove"]
+    if force:
+        command.append("--force")
+    command.append(str(worktree.path))
+
     remove_result = subprocess.run(
-        ["git", "worktree", "remove", str(worktree.path)],
+        command,
         cwd=SAMPLE_REPOSITORY_ROOT,
         capture_output=True,
         text=True,

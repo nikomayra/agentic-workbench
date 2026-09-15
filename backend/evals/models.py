@@ -28,6 +28,7 @@ class EvalResult(BaseModel):
 
     case_id: str
     configuration: str
+    trace_id: str
     observation: RunObservation
     passed: bool
     reasons: list[str]

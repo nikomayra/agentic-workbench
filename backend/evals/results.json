@@ -1,0 +1,34 @@
+[
+  {
+    "case_id": "reservation-date-validation",
+    "configuration": "full_workflow",
+    "observation": {
+      "tests_passed": false,
+      "changed_paths": [],
+      "latency_seconds": 0.39195716695394367,
+      "error": "PlannerError: Planner could not produce a plan"
+    },
+    "passed": false,
+    "reasons": [
+      "Workflow Error: PlannerError: Planner could not produce a plan",
+      "Tests Failed",
+      "Expected path areas not touched: backend/app, backend/tests"
+    ]
+  },
+  {
+    "case_id": "reservation-status-filter",
+    "configuration": "full_workflow",
+    "observation": {
+      "tests_passed": false,
+      "changed_paths": [],
+      "latency_seconds": 0.35975166701246053,
+      "error": "PlannerError: Planner could not produce a plan"
+    },
+    "passed": false,
+    "reasons": [
+      "Workflow Error: PlannerError: Planner could not produce a plan",
+      "Tests Failed",
+      "Expected path areas not touched: backend/app, backend/tests"
+    ]
+  }
+]

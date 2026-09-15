@@ -1,9 +1,8 @@
-from agents import set_default_openai_key
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import api, health
-from app.config import settings
+from app.config import configure_agents, settings
 
 app = FastAPI(title="Agentic Workbench API")
 
@@ -18,4 +17,4 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(api.router)
 
-set_default_openai_key(settings.openai_api_key)
+configure_agents()

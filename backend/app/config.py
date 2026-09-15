@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from agents import set_default_openai_key
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,3 +18,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def configure_agents() -> None:
+    set_default_openai_key(settings.openai_api_key)
