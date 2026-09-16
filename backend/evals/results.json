@@ -2,33 +2,50 @@
   {
     "case_id": "reservation-date-validation",
     "configuration": "full_workflow",
+    "trace_id": "trace_ca01c167f9174fafa3dea8d48a8985dc",
     "observation": {
-      "tests_passed": false,
-      "changed_paths": [],
-      "latency_seconds": 0.39195716695394367,
-      "error": "PlannerError: Planner could not produce a plan"
+      "tests_passed": true,
+      "changed_paths": [
+        "backend/app/schemas.py",
+        "backend/tests/test_reservations.py"
+      ],
+      "latency_seconds": 38.65899520786479,
+      "error": null,
+      "metrics": {
+        "requests": 1,
+        "input_tokens": 1584,
+        "output_tokens": 28,
+        "total_tokens": 1612,
+        "cached_input_tokens": 0,
+        "agent_turns": 22
+      }
     },
-    "passed": false,
-    "reasons": [
-      "Workflow Error: PlannerError: Planner could not produce a plan",
-      "Tests Failed",
-      "Expected path areas not touched: backend/app, backend/tests"
-    ]
+    "passed": true,
+    "reasons": []
   },
   {
     "case_id": "reservation-status-filter",
     "configuration": "full_workflow",
+    "trace_id": "trace_0e4ab9047c9545e7949c859c7447c5ff",
     "observation": {
-      "tests_passed": false,
-      "changed_paths": [],
-      "latency_seconds": 0.35975166701246053,
-      "error": "PlannerError: Planner could not produce a plan"
+      "tests_passed": true,
+      "changed_paths": [
+        "backend/app/crud.py",
+        "backend/app/routers/reservations.py",
+        "backend/tests/test_reservations.py"
+      ],
+      "latency_seconds": 36.712000667117536,
+      "error": null,
+      "metrics": {
+        "requests": 2,
+        "input_tokens": 5607,
+        "output_tokens": 158,
+        "total_tokens": 5765,
+        "cached_input_tokens": 1893,
+        "agent_turns": 24
+      }
     },
-    "passed": false,
-    "reasons": [
-      "Workflow Error: PlannerError: Planner could not produce a plan",
-      "Tests Failed",
-      "Expected path areas not touched: backend/app, backend/tests"
-    ]
+    "passed": true,
+    "reasons": []
   }
 ]

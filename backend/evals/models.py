@@ -21,6 +21,7 @@ class RunObservation(BaseModel):
     changed_paths: list[Path]
     latency_seconds: float
     error: str | None = None
+    metrics: TraceMetrics
 
 
 class EvalResult(BaseModel):
@@ -28,7 +29,17 @@ class EvalResult(BaseModel):
 
     case_id: str
     configuration: str
+    estimated_cost_usd: float | None = None
     trace_id: str
     observation: RunObservation
     passed: bool
     reasons: list[str]
+
+
+class TraceMetrics(BaseModel):
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cached_input_tokens: int
+    agent_turns: int

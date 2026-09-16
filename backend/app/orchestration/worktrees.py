@@ -51,6 +51,25 @@ def create_worktree(tree_id: str) -> Worktree:
 
 def remove_worktree_checkout(worktree: Worktree, force: bool = False) -> None:
     """Remove a checkout, optionally discarding changes in disposable worktrees."""
+    if force:
+        managed_root = WORKTREE_ROOT.resolve()
+        resolved_worktree = worktree.path.resolve()
+        if not resolved_worktree.is_relative_to(managed_root):
+            raise ValueError("Forced cleanup is limited to managed worktrees.")
+
+        clean_result = subprocess.run(
+            ["git", "clean", "-ffdx"],
+            cwd=resolved_worktree,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if clean_result.returncode != 0:
+            raise RuntimeError(
+                f"Git worktree clean failed: {clean_result.stderr.strip()}"
+            )
+
     command = ["git", "worktree", "remove"]
     if force:
         command.append("--force")

@@ -20,7 +20,7 @@ from app.schemas.schemas import (
     PlanStep,
     Workstream,
 )
-from evals.models import EvalCase, RunObservation
+from evals.models import EvalCase, RunObservation, TraceMetrics
 
 
 def sample_plan() -> Plan:
@@ -115,12 +115,34 @@ def construct_eval_case(
     )
 
 
+def construct_trace_metrics(
+    requests: int = 10,
+    input_tokens: int = 1000,
+    output_tokens: int = 2000,
+    total_tokens: int = 3000,
+    cached_input_tokens: int = 1500,
+    agent_turns: int = 20,
+) -> TraceMetrics:
+    return TraceMetrics(
+        requests=requests,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        cached_input_tokens=cached_input_tokens,
+        agent_turns=agent_turns,
+    )
+
+
 def construct_run_observation(
-    tests_passed: bool, changed_paths: list[str], error: str | None = None
+    tests_passed: bool,
+    changed_paths: list[str],
+    metrics: TraceMetrics,
+    error: str | None = None,
 ) -> RunObservation:
     return RunObservation(
         tests_passed=tests_passed,
         changed_paths=[Path(path) for path in changed_paths],
         latency_seconds=50,
         error=error,
+        metrics=metrics,
     )

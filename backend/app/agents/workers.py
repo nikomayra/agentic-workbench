@@ -22,7 +22,7 @@ from app.tools.agent_tools import (
 )
 from app.tools.editor import RepositoryEditor
 
-MAX_AGENT_TURNS = 5
+MAX_AGENT_TURNS = 7
 
 
 class WorkerError(Exception):

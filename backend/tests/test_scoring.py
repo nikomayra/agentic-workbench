@@ -1,5 +1,9 @@
 from evals.scoring import case_scorer
-from tests.factories import construct_eval_case, construct_run_observation
+from tests.factories import (
+    construct_eval_case,
+    construct_run_observation,
+    construct_trace_metrics,
+)
 
 
 def test_known_result_passes():
@@ -12,7 +16,9 @@ def test_known_result_passes():
         expected_path_prefixes, forbidden_path_prefixes
     )
     test_run_observation = construct_run_observation(
-        tests_passed=True, changed_paths=changed_paths
+        tests_passed=True,
+        changed_paths=changed_paths,
+        metrics=construct_trace_metrics(),
     )
 
     score = case_scorer(test_eval_case, test_run_observation)
@@ -31,7 +37,9 @@ def test_known_result_fails_and_reports_why():
         expected_path_prefixes, forbidden_path_prefixes
     )
     test_run_observation = construct_run_observation(
-        tests_passed=False, changed_paths=changed_paths
+        tests_passed=False,
+        changed_paths=changed_paths,
+        metrics=construct_trace_metrics(),
     )
 
     score = case_scorer(test_eval_case, test_run_observation)

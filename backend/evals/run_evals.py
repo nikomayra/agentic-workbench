@@ -3,7 +3,8 @@ import json
 import time
 from pathlib import Path
 
-from agents import trace
+from agents import add_trace_processor, trace
+from tqdm import tqdm
 
 from app.agents.planning import PlannerError, invoke_planner
 from app.agents.reviewer import ReviewerError
@@ -24,7 +25,8 @@ from app.orchestration.worktrees import (
 )
 from app.repository.operations import SAMPLE_REPOSITORY_ROOT
 from app.schemas.schemas import ApprovalResolution
-from evals.models import EvalCase, EvalResult, RunObservation
+from evals.models import EvalCase, EvalResult, RunObservation, TraceMetrics
+from evals.observability import EvalTraceProcessor
 from evals.scoring import case_scorer
 
 CASES_PATH = Path(__file__).with_name("cases.json")
@@ -36,8 +38,12 @@ APPROVAL_PAUSE_STAGES = {
 }
 EVAL_WORKFLOW_ERRORS = (PlannerError, ReviewerError, WorkerError, RuntimeError)
 
-# Sets openai key in env so we don't have to import app.main to make agent calls
-configure_agents()
+# Published GPT-5.6 Luna text-token prices in USD per one million tokens as of 16 Sept. 2026.
+# This remains an estimate because TraceMetrics does not currently separate
+# cache-write tokens, which may be billed differently from ordinary input.
+INPUT_USD_PER_MILLION = 0.20
+CACHED_INPUT_USD_PER_MILLION = 0.02
+OUTPUT_USD_PER_MILLION = 1.20
 
 
 def _validate_cases(raw_cases: object) -> list[EvalCase]:
@@ -51,79 +57,113 @@ def _validate_cases(raw_cases: object) -> list[EvalCase]:
     return [EvalCase.model_validate(item) for item in raw_cases]
 
 
-async def evaluation_orchestration(raw_cases: object) -> list[EvalResult]:
+def _format_workflow_error(exc: BaseException) -> str:
+    """Flatten expected TaskGroup failures into one readable result message."""
+    if isinstance(exc, BaseExceptionGroup):
+        return "; ".join(_format_workflow_error(item) for item in exc.exceptions)
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _estimated_cost_usd(metrics: TraceMetrics) -> float:
+    """Estimate model cost from the token categories captured by the eval."""
+    uncached_input_tokens = max(
+        metrics.input_tokens - metrics.cached_input_tokens,
+        0,
+    )
+    return (
+        uncached_input_tokens * INPUT_USD_PER_MILLION
+        + metrics.cached_input_tokens * CACHED_INPUT_USD_PER_MILLION
+        + metrics.output_tokens * OUTPUT_USD_PER_MILLION
+    ) / 1_000_000
+
+
+async def evaluation_orchestration(
+    raw_cases: object, trace_collector: EvalTraceProcessor
+) -> list[EvalResult]:
     """Evaluate cases sequentially so each run is isolated and easy to debug."""
     results: list[EvalResult] = []
+    progress = tqdm(_validate_cases(raw_cases), desc="Evaluating cases", unit="case")
 
-    for case in _validate_cases(raw_cases):
-        results.append(await evaluate_current_workflow(case))
+    for case in progress:
+        progress.set_postfix_str(case.id)
+        results.append(await evaluate_current_workflow(case, trace_collector))
 
     return results
 
 
-async def evaluate_current_workflow(case: EvalCase) -> EvalResult:
+async def evaluate_current_workflow(
+    case: EvalCase, trace_collector: EvalTraceProcessor
+) -> EvalResult:
     """Run and score one case."""
     run_state: CoordinatorExecution | None = None
-    trace_id: str = ""
     start_time = time.perf_counter()
 
-    try:
+    with trace(
+        case.id,
+        metadata={"case_id": case.id, "configuration": "full_workflow"},
+    ) as case_trace:
         try:
-            run_state, trace_id = await _run_until_final_approval(case)
-            if run_state.integration_worktree is None:
-                raise RuntimeError("Run completed with no integration worktree.")
-            if trace_id == "":
-                raise RuntimeError("Run completed with no trace id")
+            try:
+                add_trace_processor(trace_collector)
+                run_state = await _run_until_final_approval(case)
+                if run_state.integration_worktree is None:
+                    raise RuntimeError("Run completed with no integration worktree.")
 
-            observation = _build_run_observation(
-                run_state.integration_worktree,
-                time.perf_counter() - start_time,
+                observation = _build_run_observation(
+                    run_state.integration_worktree,
+                    time.perf_counter() - start_time,
+                    trace_collector.metrics_collection.mapped_metrics[
+                        case_trace.trace_id
+                    ],
+                )
+
+            except* EVAL_WORKFLOW_ERRORS as exc:
+                observation = RunObservation(
+                    tests_passed=False,
+                    changed_paths=[],
+                    latency_seconds=time.perf_counter() - start_time,
+                    error=_format_workflow_error(exc),
+                    metrics=trace_collector.metrics_collection.mapped_metrics[
+                        case_trace.trace_id
+                    ],
+                )
+
+            score = case_scorer(case, observation)
+
+            return EvalResult(
+                case_id=case.id,
+                configuration="full_workflow",
+                estimated_cost_usd=_estimated_cost_usd(observation.metrics),
+                observation=observation,
+                trace_id=case_trace.trace_id,
+                passed=score.passed,
+                reasons=score.reasons,
             )
-
-        except EVAL_WORKFLOW_ERRORS as exc:
-            observation = RunObservation(
-                tests_passed=False,
-                changed_paths=[],
-                latency_seconds=time.perf_counter() - start_time,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-
-        score = case_scorer(case, observation)
-
-        return EvalResult(
-            case_id=case.id,
-            configuration="full_workflow",
-            observation=observation,
-            trace_id=trace_id,
-            passed=score.passed,
-            reasons=score.reasons,
-        )
-    finally:
-        if run_state is not None:
-            _clean_up_resources(run_state)
+        finally:
+            if run_state is not None:
+                _clean_up_resources(run_state)
 
 
 async def _run_until_final_approval(
     case: EvalCase,
-) -> tuple[CoordinatorExecution, str]:
+) -> CoordinatorExecution:
     """Run the user's original planner/resume loop up to the inspection boundary."""
     execution: CoordinatorExecution | None = None
 
     try:
-        with trace(case.id) as case_trace:
-            plan = await invoke_planner(SAMPLE_REPOSITORY_ROOT, case.objective)
-            execution = await start_coordinator(plan)
+        plan = await invoke_planner(SAMPLE_REPOSITORY_ROOT, case.objective)
+        execution = await start_coordinator(plan)
 
-            while execution.stage != CoordinatorStages.AWAITING_FINAL_APPROVAL:
-                if execution.stage not in APPROVAL_PAUSE_STAGES:
-                    raise RuntimeError(
-                        f"Eval workflow returned an unexpected stage: {execution.stage}"
-                    )
+        while execution.stage != CoordinatorStages.AWAITING_FINAL_APPROVAL:
+            if execution.stage not in APPROVAL_PAUSE_STAGES:
+                raise RuntimeError(
+                    f"Eval workflow returned an unexpected stage: {execution.stage}"
+                )
 
-                resolutions = _approve_fixture_edits(execution)
-                execution = await resume_coordinator(plan, execution, resolutions)
+            resolutions = _approve_fixture_edits(execution)
+            execution = await resume_coordinator(plan, execution, resolutions)
 
-            return (execution, case_trace.trace_id)
+        return execution
     except Exception:
         # Assignment to the caller happens only when this function returns. If it
         # raises, this function is the last layer that can see its partial state.
@@ -177,8 +217,7 @@ def _save_results(results: list[EvalResult], path: Path = RESULTS_PATH) -> None:
 
 
 def _build_run_observation(
-    eval_integration_worktree: Worktree,
-    latency_seconds: float,
+    eval_integration_worktree: Worktree, latency_seconds: float, metrics: TraceMetrics
 ) -> RunObservation:
     """Build an observation for a workflow that produced an inspectable worktree."""
     test_outcome = run_tests(eval_integration_worktree.path)
@@ -187,12 +226,22 @@ def _build_run_observation(
         tests_passed=test_outcome.passed,
         changed_paths=list(diff_output.changed_paths),
         latency_seconds=latency_seconds,
+        metrics=metrics,
     )
 
 
 def _print_summary_report(results: list[EvalResult]) -> None:
     if not results:
         return
+
+    total_cases_run = len(results)
+    total_failures = len([result for result in results if result.passed == False])
+    total_passed = len([result for result in results if result.passed == True])
+    total_tokens = sum([result.observation.metrics.total_tokens for result in results])
+    total_agent_turns = sum(
+        [result.observation.metrics.agent_turns for result in results]
+    )
+    total_estimated_cost = sum(result.estimated_cost_usd or 0.0 for result in results)
 
     failures = [
         {"case_id": r.case_id, "passed": r.passed, "reasons": r.reasons}
@@ -204,29 +253,47 @@ def _print_summary_report(results: list[EvalResult]) -> None:
         results
     )
 
-    total_cases_run = len(results)
-    total_failures = len([result for result in results if result.passed == False])
-    total_passed = len([result for result in results if result.passed == True])
+    avg_tokens_per_case = sum(
+        [result.observation.metrics.total_tokens for result in results]
+    ) / len(results)
+
+    avg_turns_per_case = sum(
+        [result.observation.metrics.agent_turns for result in results]
+    ) / len(results)
 
     passed_results = [result for result in results if result.passed]
 
-    fastest_pass = min(
-        passed_results,
-        key=lambda result: result.observation.latency_seconds,
-        default=None,
-    )
-
-    slowest_pass = max(
-        passed_results,
-        key=lambda result: result.observation.latency_seconds,
-        default=None,
-    )
+    if passed_results:
+        fastest_result = min(
+            passed_results,
+            key=lambda result: result.observation.latency_seconds,
+        )
+        slowest_result = max(
+            passed_results,
+            key=lambda result: result.observation.latency_seconds,
+        )
+        fastest_pass = {
+            "case_id": fastest_result.case_id,
+            "latency_seconds": f"{fastest_result.observation.latency_seconds:.2f}",
+        }
+        slowest_pass = {
+            "case_id": slowest_result.case_id,
+            "latency_seconds": f"{slowest_result.observation.latency_seconds:.2f}",
+        }
+    else:
+        fastest_pass = {}
+        slowest_pass = {}
 
     summary = {
-        "Total cases run": total_cases_run,
+        "Total cases": total_cases_run,
+        "Total tokens used": total_tokens,
+        "Total agent turns": total_agent_turns,
+        "Estimated model cost [USD]": f"{total_estimated_cost:.6f}",
         "Total Failures": total_failures,
         "Total Passed": total_passed,
-        "Average run latency": avg_latency,
+        "Avg run latency [seconds]": f"{avg_latency:.2f}",
+        "Avg tokens per case": avg_tokens_per_case,
+        "Avg turns per case": avg_turns_per_case,
         "Fastest passed case run": fastest_pass,
         "Slowest passed case run": slowest_pass,
         "Failed case run(s)": failures,
@@ -236,7 +303,9 @@ def _print_summary_report(results: list[EvalResult]) -> None:
 
 
 async def main() -> None:
-    results = await evaluation_orchestration(_load_cases())
+    configure_agents()
+    trace_collector = EvalTraceProcessor()
+    results = await evaluation_orchestration(_load_cases(), trace_collector)
     _save_results(results)
     _print_summary_report(results)
 

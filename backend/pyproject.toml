@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings",
     "openai-agents>=0.21.0",
     "mcp[cli]>=2.0.0",
+    "tqdm>=4.70.0",
 ]
 
 [dependency-groups]

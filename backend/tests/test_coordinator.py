@@ -373,13 +373,13 @@ def test_dispatcher_advances_completed_work_to_final_approval(monkeypatch):
 
 
 def test_approved_finalization_removes_checkouts_but_keeps_result_branch(monkeypatch):
-    removed_checkouts: list[str] = []
+    removed_checkouts: list[tuple[str, bool]] = []
     deleted_branches: list[str] = []
 
     monkeypatch.setattr(
         coordinator_module,
         "remove_worktree_checkout",
-        lambda worktree: removed_checkouts.append(worktree.id),
+        lambda worktree, force=False: removed_checkouts.append((worktree.id, force)),
     )
     monkeypatch.setattr(
         coordinator_module,
@@ -390,18 +390,18 @@ def test_approved_finalization_removes_checkouts_but_keeps_result_branch(monkeyp
     result = finalize_coordinator(finalization_state(), approved=True)
 
     assert result.stage == CoordinatorStages.COMPLETED
-    assert removed_checkouts == ["backend", "integration"]
+    assert removed_checkouts == [("backend", True), ("integration", True)]
     assert deleted_branches == ["backend"]
 
 
 def test_rejected_finalization_removes_checkouts_and_all_branches(monkeypatch):
-    removed_checkouts: list[str] = []
+    removed_checkouts: list[tuple[str, bool]] = []
     deleted_branches: list[str] = []
 
     monkeypatch.setattr(
         coordinator_module,
         "remove_worktree_checkout",
-        lambda worktree: removed_checkouts.append(worktree.id),
+        lambda worktree, force=False: removed_checkouts.append((worktree.id, force)),
     )
     monkeypatch.setattr(
         coordinator_module,
@@ -412,5 +412,5 @@ def test_rejected_finalization_removes_checkouts_and_all_branches(monkeypatch):
     result = finalize_coordinator(finalization_state(), approved=False)
 
     assert result.stage == CoordinatorStages.REJECTED
-    assert removed_checkouts == ["backend", "integration"]
+    assert removed_checkouts == [("backend", True), ("integration", True)]
     assert deleted_branches == ["backend", "integration"]

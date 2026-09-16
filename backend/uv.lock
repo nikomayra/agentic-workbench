@@ -67,6 +67,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-settings" },
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "tqdm" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -86,6 +87,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"] },
     { name = "pydantic-settings" },
     { name = "sqlalchemy", extras = ["asyncio"] },
+    { name = "tqdm", specifier = ">=4.70.0" },
     { name = "uvicorn", extras = ["standard"] },
 ]
 

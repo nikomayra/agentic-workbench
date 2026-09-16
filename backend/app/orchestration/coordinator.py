@@ -63,7 +63,7 @@ def prepare_work(execution_plan: ExecutionPlan) -> list[WorkRecord]:
     except Exception:
         # If preparation fails halfway through, remove resources already created.
         for worker in reversed(prepared_work):
-            remove_worktree_checkout(worker.worktree)
+            remove_worktree_checkout(worker.worktree, force=True)
             delete_generated_branch(worker.worktree)
         raise
 
@@ -409,10 +409,10 @@ def finalize_coordinator(
         raise RuntimeError("Missing integration worktree; cannot finalize coordinator.")
 
     for work_record in saved_state.work_records:
-        remove_worktree_checkout(work_record.worktree)
+        remove_worktree_checkout(work_record.worktree, force=True)
         delete_generated_branch(work_record.worktree)
 
-    remove_worktree_checkout(saved_state.integration_worktree)
+    remove_worktree_checkout(saved_state.integration_worktree, force=True)
     if not approved:
         delete_generated_branch(saved_state.integration_worktree)
 
@@ -459,7 +459,7 @@ async def _start_work(execution_plan: ExecutionPlan) -> CoordinatorExecution:
         return _state_from_work_results(executed_work)
     except Exception as exc:
         for work in reversed(prepared_work):
-            remove_worktree_checkout(work.worktree)
+            remove_worktree_checkout(work.worktree, force=True)
             delete_generated_branch(work.worktree)
         raise RuntimeError("Failed to start work") from exc
 

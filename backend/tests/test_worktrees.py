@@ -5,9 +5,11 @@ import pytest
 
 import app.orchestration.worktrees as worktrees_module
 from app.orchestration.worktrees import (
+    WORKTREE_ROOT,
     Worktree,
     complete_merge_after_conflict,
     merge_worktree_changes,
+    remove_worktree_checkout,
 )
 from tests.factories import worktree
 
@@ -40,6 +42,28 @@ def test_merge_worktree_changes_returns_success(monkeypatch):
 
     assert outcome.conflicts is False
     assert outcome.conflict_file_paths is None
+
+
+def test_force_remove_cleans_managed_worktree_before_removal(monkeypatch):
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        return _command_result(returncode=0)
+
+    monkeypatch.setattr(worktrees_module.subprocess, "run", fake_run)
+    managed_worktree = Worktree(
+        id="test",
+        branch="worker/test",
+        path=WORKTREE_ROOT / "test",
+    )
+
+    remove_worktree_checkout(managed_worktree, force=True)
+
+    assert commands == [
+        ["git", "clean", "-ffdx"],
+        ["git", "worktree", "remove", "--force", str(managed_worktree.path)],
+    ]
 
 
 def test_merge_worktree_changes_returns_conflict_paths(monkeypatch):
