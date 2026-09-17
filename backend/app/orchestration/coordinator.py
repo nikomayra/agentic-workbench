@@ -487,10 +487,12 @@ def _commit_completed_work(state: CoordinatorExecution) -> None:
         output = commit_worktree_changes(
             work.worktree, f"Completed work_record: {work.work_id}"
         )
-        if not output.committed:
-            raise RuntimeError("Completed work failed to commit.")
-        elif output.committed and not output.commit_hash:
+        if output.committed and not output.commit_hash:
             raise RuntimeError("Completed work committed but no commit hash saved.")
+
+        # NOTE: Successfully completed no-change workstreams allowed.
+        # if not output.committed:
+        #     raise RuntimeError("Completed work failed to commit.")
 
 
 def _create_integration_worktree(state: CoordinatorExecution) -> CoordinatorExecution:

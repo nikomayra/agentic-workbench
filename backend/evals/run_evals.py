@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+import uuid
 from pathlib import Path
 
 from agents import add_trace_processor, trace
@@ -8,7 +9,15 @@ from tqdm import tqdm
 
 from app.agents.planning import PlannerError, invoke_planner
 from app.agents.reviewer import ReviewerError
-from app.agents.workers import WorkerError
+from app.agents.workers import (
+    WorkerError,
+    WorkerInput,
+    WorkExecution,
+    WorkExecutionStatus,
+    Workstream,
+    invoke_worker,
+    resume_worker,
+)
 from app.config import configure_agents
 from app.models.models import ApprovalDecision
 from app.orchestration.coordinator import resume_coordinator, start_coordinator
@@ -20,12 +29,20 @@ from app.orchestration.state import (
 )
 from app.orchestration.worktrees import (
     Worktree,
+    create_worktree,
     delete_generated_branch,
     remove_worktree_checkout,
 )
 from app.repository.operations import SAMPLE_REPOSITORY_ROOT
-from app.schemas.schemas import ApprovalResolution
-from evals.models import EvalCase, EvalResult, RunObservation, TraceMetrics
+from app.schemas.schemas import ApprovalRequest, ApprovalResolution
+from evals.models import (
+    EvalCase,
+    EvalConfiguration,
+    EvalResult,
+    ExecutionFacts,
+    RunObservation,
+    TraceMetrics,
+)
 from evals.observability import EvalTraceProcessor
 from evals.scoring import case_scorer
 
@@ -78,70 +95,218 @@ def _estimated_cost_usd(metrics: TraceMetrics) -> float:
 
 
 async def evaluation_orchestration(
-    raw_cases: object, trace_collector: EvalTraceProcessor
+    raw_cases: object, trace_processor: EvalTraceProcessor
 ) -> list[EvalResult]:
     """Evaluate cases sequentially so each run is isolated and easy to debug."""
-    results: list[EvalResult] = []
-    progress = tqdm(_validate_cases(raw_cases), desc="Evaluating cases", unit="case")
+    eval_workflow_configurations = list(EvalConfiguration)
 
-    for case in progress:
-        progress.set_postfix_str(case.id)
-        results.append(await evaluate_current_workflow(case, trace_collector))
+    results: list[EvalResult] = []
+    cases = _validate_cases(raw_cases)
+    progress = tqdm(
+        total=len(eval_workflow_configurations) * len(cases),
+        desc="Evaluating",
+        unit="case",
+    )
+
+    for config in eval_workflow_configurations:
+        for case in cases:
+            progress.set_description(
+                f"Evaluating Configuration {config}, Case {case.id}"
+            )
+            results.append(
+                await evaluate_current_workflow(config, case, trace_processor)
+            )
+            progress.update(1)
 
     return results
 
 
 async def evaluate_current_workflow(
-    case: EvalCase, trace_collector: EvalTraceProcessor
+    workflow_config: EvalConfiguration,
+    case: EvalCase,
+    trace_processor: EvalTraceProcessor,
 ) -> EvalResult:
     """Run and score one case."""
-    run_state: CoordinatorExecution | None = None
     start_time = time.perf_counter()
 
     with trace(
         case.id,
-        metadata={"case_id": case.id, "configuration": "full_workflow"},
+        metadata={"case_id": case.id, "configuration": workflow_config},
     ) as case_trace:
         try:
-            try:
-                add_trace_processor(trace_collector)
-                run_state = await _run_until_final_approval(case)
-                if run_state.integration_worktree is None:
-                    raise RuntimeError("Run completed with no integration worktree.")
+            execution_facts = await _execution_mapper(workflow_config, case)
 
-                observation = _build_run_observation(
-                    run_state.integration_worktree,
-                    time.perf_counter() - start_time,
-                    trace_collector.metrics_collection.mapped_metrics[
-                        case_trace.trace_id
-                    ],
-                )
-
-            except* EVAL_WORKFLOW_ERRORS as exc:
-                observation = RunObservation(
-                    tests_passed=False,
-                    changed_paths=[],
-                    latency_seconds=time.perf_counter() - start_time,
-                    error=_format_workflow_error(exc),
-                    metrics=trace_collector.metrics_collection.mapped_metrics[
-                        case_trace.trace_id
-                    ],
-                )
-
-            score = case_scorer(case, observation)
-
-            return EvalResult(
-                case_id=case.id,
-                configuration="full_workflow",
-                estimated_cost_usd=_estimated_cost_usd(observation.metrics),
-                observation=observation,
-                trace_id=case_trace.trace_id,
-                passed=score.passed,
-                reasons=score.reasons,
+            observation = RunObservation(
+                tests_passed=execution_facts.tests_passed,
+                changed_paths=execution_facts.changed_paths,
+                latency_seconds=time.perf_counter() - start_time,
+                error=execution_facts.error,
+                metrics=trace_processor.metrics_collection.metrics_for(
+                    case_trace.trace_id
+                ),
             )
-        finally:
-            if run_state is not None:
-                _clean_up_resources(run_state)
+
+        except* EVAL_WORKFLOW_ERRORS as exc:
+            observation = RunObservation(
+                tests_passed=False,
+                changed_paths=[],
+                latency_seconds=time.perf_counter() - start_time,
+                error=_format_workflow_error(exc),
+                metrics=trace_processor.metrics_collection.metrics_for(
+                    case_trace.trace_id
+                ),
+            )
+
+        score = case_scorer(case, observation)
+
+        return EvalResult(
+            case_id=case.id,
+            configuration=workflow_config,
+            estimated_cost_usd=_estimated_cost_usd(observation.metrics),
+            observation=observation,
+            trace_id=case_trace.trace_id,
+            passed=score.passed,
+            reasons=score.reasons,
+        )
+
+
+async def _execution_mapper(
+    configuration: EvalConfiguration, case: EvalCase
+) -> ExecutionFacts:
+    match configuration:
+        case EvalConfiguration.FULL_WORKFLOW:
+            return await execute_full_workflow(case)
+
+        case EvalConfiguration.PLANNER_WORKER:
+            return await execute_planner_worker_workflow(case)
+
+        case EvalConfiguration.SINGLE_WORKER:
+            return await execute_single_worker_workflow(case)
+
+        case _:
+            raise RuntimeError("Unsupported configuration detected")
+
+
+async def execute_single_worker_workflow(case: EvalCase) -> ExecutionFacts:
+    """Run the raw objective through one worker without planning or review."""
+
+    single_workstream = Workstream(
+        name=case.id,
+        task=case.objective,
+        intended_paths=[],
+        acceptance_criteria=[
+            "Implement the requested objective and keep relevant tests passing."
+        ],
+    )
+    worktree = create_worktree(f"eval_{case.id}_{uuid.uuid4()}")
+    try:
+        await _run_worker_until_complete(
+            WorkerInput(workstream=single_workstream), worktree
+        )
+        test_outcome = run_tests(worktree.path)
+        diff_output = git_diff(worktree.path)
+        exc_facts = ExecutionFacts(
+            tests_passed=test_outcome.passed,
+            changed_paths=list(diff_output.changed_paths),
+        )
+    except EVAL_WORKFLOW_ERRORS as exc:
+        exc_facts = ExecutionFacts(
+            tests_passed=False,
+            changed_paths=[],
+            error=_format_workflow_error(exc),
+        )
+    finally:
+        remove_worktree_checkout(worktree, force=True)
+        delete_generated_branch(worktree)
+
+    return exc_facts
+
+
+async def execute_planner_worker_workflow(case: EvalCase) -> ExecutionFacts:
+    """Use a planner, then give its complete plan to one worker without review."""
+
+    worktree: Worktree | None = None
+    try:
+        plan = await invoke_planner(SAMPLE_REPOSITORY_ROOT, case.objective)
+        worktree = create_worktree(f"eval_{case.id}_{uuid.uuid4()}")
+        combined_plan_steps = "\n".join(
+            f"{step.title}: {step.description}" for step in plan.steps
+        )
+        single_workstream = Workstream(
+            name=case.id,
+            task=f"{plan.summary}\n{combined_plan_steps}",
+            intended_paths=[],
+            acceptance_criteria=[step.acceptance_criteria for step in plan.steps],
+        )
+        await _run_worker_until_complete(
+            WorkerInput(workstream=single_workstream), worktree
+        )
+        test_outcome = run_tests(worktree.path)
+        diff_output = git_diff(worktree.path)
+        exc_facts = ExecutionFacts(
+            tests_passed=test_outcome.passed,
+            changed_paths=list(diff_output.changed_paths),
+        )
+    except EVAL_WORKFLOW_ERRORS as exc:
+        exc_facts = ExecutionFacts(
+            tests_passed=False,
+            changed_paths=[],
+            error=_format_workflow_error(exc),
+        )
+    finally:
+        if worktree is not None:
+            remove_worktree_checkout(worktree, force=True)
+            delete_generated_branch(worktree)
+
+    return exc_facts
+
+
+async def execute_full_workflow(case: EvalCase) -> ExecutionFacts:
+    """Execute the full_workflow (default) per Eval case"""
+    state: CoordinatorExecution | None = None
+    try:
+        state = await _run_until_final_approval(case)
+        if state.integration_worktree is None:
+            raise RuntimeError("Run completed with no integration worktree.")
+
+        test_outcome = run_tests(state.integration_worktree.path)
+        diff_output = git_diff(state.integration_worktree.path)
+        exc_facts = ExecutionFacts(
+            tests_passed=test_outcome.passed,
+            changed_paths=list(diff_output.changed_paths),
+        )
+    except* EVAL_WORKFLOW_ERRORS as exc:
+        exc_facts = ExecutionFacts(
+            tests_passed=False, changed_paths=[], error=_format_workflow_error(exc)
+        )
+    finally:
+        if state is not None:
+            _clean_up_coordinator_resources(state)
+
+    return exc_facts
+
+
+async def _run_worker_until_complete(
+    worker_input: WorkerInput, worktree: Worktree
+) -> WorkExecution:
+    """Run a single worker to the inspection boundary."""
+    execution = await invoke_worker(worktree.path, worker_input)
+
+    while execution.status != WorkExecutionStatus.COMPLETED:
+        if execution.status != WorkExecutionStatus.PENDING_APPROVAL:
+            raise RuntimeError(
+                f"Single-worker eval workflow returned an unexpected status: {execution.status}"
+            )
+        if execution.run_state is None:
+            raise RuntimeError(
+                "Single-worker eval workflow failed to return run_state"
+            )
+        resolutions = _approve_fixture_edits(execution.approval_requests)
+        execution = await resume_worker(
+            worktree.path, execution.run_state, resolutions
+        )
+
+    return execution
 
 
 async def _run_until_final_approval(
@@ -159,8 +324,8 @@ async def _run_until_final_approval(
                 raise RuntimeError(
                     f"Eval workflow returned an unexpected stage: {execution.stage}"
                 )
-
-            resolutions = _approve_fixture_edits(execution)
+            requests = pending_approval_requests(execution)
+            resolutions = _approve_fixture_edits(requests)
             execution = await resume_coordinator(plan, execution, resolutions)
 
         return execution
@@ -168,15 +333,15 @@ async def _run_until_final_approval(
         # Assignment to the caller happens only when this function returns. If it
         # raises, this function is the last layer that can see its partial state.
         if execution is not None:
-            _clean_up_resources(execution)
+            _clean_up_coordinator_resources(execution)
         raise
 
 
 def _approve_fixture_edits(
-    execution: CoordinatorExecution,
+    requests: list[ApprovalRequest],
 ) -> dict[str, ApprovalResolution]:
     """Approve only the fixture-scoped apply-patch interruptions used by workers."""
-    requests = pending_approval_requests(execution)
+
     if not requests:
         raise RuntimeError("Paused eval workflow did not expose an approval request.")
 
@@ -193,7 +358,7 @@ def _approve_fixture_edits(
     return resolutions
 
 
-def _clean_up_resources(saved_state: CoordinatorExecution) -> None:
+def _clean_up_coordinator_resources(saved_state: CoordinatorExecution) -> None:
     for work_record in saved_state.work_records:
         remove_worktree_checkout(work_record.worktree, force=True)
         delete_generated_branch(work_record.worktree)
@@ -216,24 +381,11 @@ def _save_results(results: list[EvalResult], path: Path = RESULTS_PATH) -> None:
     path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
 
-def _build_run_observation(
-    eval_integration_worktree: Worktree, latency_seconds: float, metrics: TraceMetrics
-) -> RunObservation:
-    """Build an observation for a workflow that produced an inspectable worktree."""
-    test_outcome = run_tests(eval_integration_worktree.path)
-    diff_output = git_diff(eval_integration_worktree.path)
-    return RunObservation(
-        tests_passed=test_outcome.passed,
-        changed_paths=list(diff_output.changed_paths),
-        latency_seconds=latency_seconds,
-        metrics=metrics,
-    )
-
-
 def _print_summary_report(results: list[EvalResult]) -> None:
     if not results:
         return
 
+    # Global totals calculations
     total_cases_run = len(results)
     total_failures = len([result for result in results if result.passed == False])
     total_passed = len([result for result in results if result.passed == True])
@@ -261,42 +413,60 @@ def _print_summary_report(results: list[EvalResult]) -> None:
         [result.observation.metrics.agent_turns for result in results]
     ) / len(results)
 
-    passed_results = [result for result in results if result.passed]
+    # Per-configuration breakdown
+    configs_breakdown = {}
+    for config in {result.configuration for result in results}:
+        config_results = [r for r in results if r.configuration == config]
+        config_passed = len([r for r in config_results if r.passed])
+        config_failed = len([r for r in config_results if not r.passed])
+        config_total = len(config_results)
+        config_pass_rate = (
+            (config_passed / config_total * 100) if config_total > 0 else 0
+        )
+        config_avg_latency = (
+            sum([r.observation.latency_seconds for r in config_results]) / config_total
+            if config_total > 0
+            else 0
+        )
+        config_avg_tokens = (
+            sum([r.observation.metrics.total_tokens for r in config_results])
+            / config_total
+            if config_total > 0
+            else 0
+        )
+        config_avg_turns = (
+            sum([r.observation.metrics.agent_turns for r in config_results])
+            / config_total
+            if config_total > 0
+            else 0
+        )
+        config_cost = sum([r.estimated_cost_usd or 0.0 for r in config_results])
 
-    if passed_results:
-        fastest_result = min(
-            passed_results,
-            key=lambda result: result.observation.latency_seconds,
-        )
-        slowest_result = max(
-            passed_results,
-            key=lambda result: result.observation.latency_seconds,
-        )
-        fastest_pass = {
-            "case_id": fastest_result.case_id,
-            "latency_seconds": f"{fastest_result.observation.latency_seconds:.2f}",
+        configs_breakdown[config] = {
+            "Total cases": config_total,
+            "Passed": config_passed,
+            "Failed": config_failed,
+            "Pass rate [%]": f"{config_pass_rate:.2f}",
+            "Avg latency [seconds]": f"{config_avg_latency:.2f}",
+            "Avg tokens per case": f"{config_avg_tokens:.2f}",
+            "Avg agent turns per case": f"{config_avg_turns:.2f}",
+            "Estimated cost [USD]": f"{config_cost:.6f}",
         }
-        slowest_pass = {
-            "case_id": slowest_result.case_id,
-            "latency_seconds": f"{slowest_result.observation.latency_seconds:.2f}",
-        }
-    else:
-        fastest_pass = {}
-        slowest_pass = {}
 
     summary = {
-        "Total cases": total_cases_run,
-        "Total tokens used": total_tokens,
-        "Total agent turns": total_agent_turns,
-        "Estimated model cost [USD]": f"{total_estimated_cost:.6f}",
-        "Total Failures": total_failures,
-        "Total Passed": total_passed,
-        "Avg run latency [seconds]": f"{avg_latency:.2f}",
-        "Avg tokens per case": avg_tokens_per_case,
-        "Avg turns per case": avg_turns_per_case,
-        "Fastest passed case run": fastest_pass,
-        "Slowest passed case run": slowest_pass,
-        "Failed case run(s)": failures,
+        "Global totals": {
+            "Total cases": total_cases_run,
+            "Total Passed": total_passed,
+            "Total Failures": total_failures,
+            "Total tokens used": total_tokens,
+            "Total agent turns": total_agent_turns,
+            "Estimated model cost [USD]": f"{total_estimated_cost:.6f}",
+            "Avg run latency [seconds]": f"{avg_latency:.2f}",
+            "Avg tokens per case": f"{avg_tokens_per_case:.2f}",
+            "Avg agent turns per case": f"{avg_turns_per_case:.2f}",
+            "Failed case run(s)": failures,
+        },
+        "Per-configuration breakdown": configs_breakdown,
     }
 
     print(json.dumps(summary, indent=2))
@@ -304,11 +474,38 @@ def _print_summary_report(results: list[EvalResult]) -> None:
 
 async def main() -> None:
     configure_agents()
-    trace_collector = EvalTraceProcessor()
-    results = await evaluation_orchestration(_load_cases(), trace_collector)
+    trace_processor = EvalTraceProcessor()
+    add_trace_processor(trace_processor)
+    results = await evaluation_orchestration(_load_cases(), trace_processor)
     _save_results(results)
     _print_summary_report(results)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+# Candidate eval cases to move into cases.json after the configuration executors
+# are stable. These deliberately cover backend-only, frontend-only, and
+# full-stack work so the configuration comparison exercises different shapes.
+#
+# {
+#   "id": "reservation-pagination",
+#   "objective": "Add limit and offset query parameters to GET /reservations, preserve deterministic ordering, and add backend tests for defaults, custom pages, and invalid values.",
+#   "expected_path_prefixes": ["backend/app/", "backend/tests/"],
+#   "forbidden_path_prefixes": ["frontend/", ".git/"]
+# }
+#
+# {
+#   "id": "reservation-empty-state",
+#   "objective": "Show a clear empty-state message in the reservations UI when no reservations exist, and add a focused frontend test for that behavior.",
+#   "expected_path_prefixes": ["frontend/src/"],
+#   "forbidden_path_prefixes": ["backend/", ".git/"]
+# }
+#
+# {
+#   "id": "property-reservation-filter",
+#   "objective": "Add optional property_id filtering to GET /reservations, expose it in the frontend reservations view, and add focused backend and frontend tests while preserving the unfiltered behavior.",
+#   "expected_path_prefixes": ["backend/app/", "backend/tests/", "frontend/src/"],
+#   "forbidden_path_prefixes": [".git/"]
+# }

@@ -2,31 +2,34 @@
   {
     "case_id": "reservation-date-validation",
     "configuration": "full_workflow",
-    "trace_id": "trace_ca01c167f9174fafa3dea8d48a8985dc",
+    "estimated_cost_usd": 0.00573376,
+    "trace_id": "trace_e818a2e1919542e198e8768fdde786ef",
     "observation": {
-      "tests_passed": true,
-      "changed_paths": [
-        "backend/app/schemas.py",
-        "backend/tests/test_reservations.py"
-      ],
-      "latency_seconds": 38.65899520786479,
-      "error": null,
+      "tests_passed": false,
+      "changed_paths": [],
+      "latency_seconds": 32.402427583001554,
+      "error": "RuntimeError: Completed work failed to commit.",
       "metrics": {
-        "requests": 1,
-        "input_tokens": 1584,
-        "output_tokens": 28,
-        "total_tokens": 1612,
-        "cached_input_tokens": 0,
-        "agent_turns": 22
+        "requests": 18,
+        "input_tokens": 32720,
+        "output_tokens": 1732,
+        "total_tokens": 34452,
+        "cached_input_tokens": 16048,
+        "agent_turns": 18
       }
     },
-    "passed": true,
-    "reasons": []
+    "passed": false,
+    "reasons": [
+      "Workflow Error: RuntimeError: Completed work failed to commit.",
+      "Tests Failed",
+      "Expected path areas not touched: backend/app, backend/tests"
+    ]
   },
   {
     "case_id": "reservation-status-filter",
     "configuration": "full_workflow",
-    "trace_id": "trace_0e4ab9047c9545e7949c859c7447c5ff",
+    "estimated_cost_usd": 0.00944012,
+    "trace_id": "trace_9859ba2999354d408dec4354d1d97304",
     "observation": {
       "tests_passed": true,
       "changed_paths": [
@@ -34,15 +37,15 @@
         "backend/app/routers/reservations.py",
         "backend/tests/test_reservations.py"
       ],
-      "latency_seconds": 36.712000667117536,
+      "latency_seconds": 37.60541229089722,
       "error": null,
       "metrics": {
-        "requests": 2,
-        "input_tokens": 5607,
-        "output_tokens": 158,
-        "total_tokens": 5765,
-        "cached_input_tokens": 1893,
-        "agent_turns": 24
+        "requests": 26,
+        "input_tokens": 52282,
+        "output_tokens": 3312,
+        "total_tokens": 55594,
+        "cached_input_tokens": 27726,
+        "agent_turns": 26
       }
     },
     "passed": true,

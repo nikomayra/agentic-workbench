@@ -1,6 +1,20 @@
+from enum import StrEnum, unique
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
+
+
+@unique
+class EvalConfiguration(StrEnum):
+    """
+    | `single_worker` | Raw objective → one worker |
+    | `planner_worker` | Planner → its plan converted into one worker assignment |
+    | `full_workflow` | Planner → decomposer → one/many workers → reviewer |
+    """
+
+    FULL_WORKFLOW = "full_workflow"
+    SINGLE_WORKER = "single_worker"
+    PLANNER_WORKER = "planner_worker"
 
 
 class EvalCase(BaseModel):
@@ -22,6 +36,12 @@ class RunObservation(BaseModel):
     latency_seconds: float
     error: str | None = None
     metrics: TraceMetrics
+
+
+class ExecutionFacts(BaseModel):
+    tests_passed: bool
+    changed_paths: list[Path]
+    error: str | None = None
 
 
 class EvalResult(BaseModel):
