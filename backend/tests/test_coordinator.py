@@ -18,6 +18,7 @@ from app.orchestration.coordinator import (
     _state_from_merge_repair_completed,
     advance_until_pause,
     finalize_coordinator,
+    resume_coordinator,
     resume_merge_conflict_repair,
     start_merge_conflict_repair,
 )
@@ -29,6 +30,8 @@ from app.orchestration.state import (
 )
 from app.orchestration.worktrees import MergeOutcome, Worktree
 from app.schemas.schemas import (
+    ApprovalDecision,
+    ApprovalResolution,
     ExecutionPlan,
     ReviewOutput,
     ReviewStatus,
@@ -38,6 +41,7 @@ from tests.factories import (
     completed_work_record,
     finalization_state,
     merge_conflict_state,
+    pending_execution,
     sample_plan,
 )
 
@@ -370,6 +374,52 @@ def test_dispatcher_advances_completed_work_to_final_approval(monkeypatch):
 
     assert transitions == ["commit", "create_integration", "merge", "review"]
     assert result.stage == CoordinatorStages.AWAITING_FINAL_APPROVAL
+
+
+def test_serialized_resume_does_not_replay_completed_work(monkeypatch):
+    completed = completed_work_record("already-completed")
+    pending = completed_work_record("pending").model_copy(
+        update={"work_execution": pending_execution("approval-1")}
+    )
+    saved_json = CoordinatorExecution(
+        stage=CoordinatorStages.AWAITING_APPROVALS,
+        work_records=[completed, pending],
+    ).model_dump(mode="json")
+    reloaded_state = CoordinatorExecution.model_validate(saved_json)
+    resumed_worktree_ids = []
+
+    async def fake_resume_worker(trusted_root, run_state, resolutions):
+        resumed_worktree_ids.append(trusted_root.name)
+        assert run_state == {"saved": True}
+        assert resolutions["approval-1"].decision == ApprovalDecision.Approved
+        return WorkExecution(
+            status=WorkExecutionStatus.COMPLETED,
+            output=WorkerOutput(work_notes="Pending work completed"),
+        )
+
+    async def stop_after_resume(_plan, state):
+        return state
+
+    monkeypatch.setattr(coordinator_module, "resume_worker", fake_resume_worker)
+    monkeypatch.setattr(coordinator_module, "advance_until_pause", stop_after_resume)
+
+    result = asyncio.run(
+        resume_coordinator(
+            sample_plan(),
+            reloaded_state,
+            {
+                "approval-1": ApprovalResolution(
+                    decision=ApprovalDecision.Approved
+                )
+            },
+        )
+    )
+
+    assert resumed_worktree_ids == ["pending"]
+    assert result.stage == CoordinatorStages.WORK_COMPLETED
+    assert result.work_records[0].work_execution == completed.work_execution
+    assert result.work_records[1].work_execution is not None
+    assert result.work_records[1].work_execution.status == WorkExecutionStatus.COMPLETED
 
 
 def test_approved_finalization_removes_checkouts_but_keeps_result_branch(monkeypatch):

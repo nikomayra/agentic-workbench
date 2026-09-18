@@ -22,8 +22,6 @@ from app.tools.agent_tools import (
 )
 from app.tools.editor import RepositoryEditor
 
-MAX_AGENT_TURNS = 7
-
 
 class WorkerError(Exception):
     """A worker failed."""
@@ -90,7 +88,6 @@ async def invoke_worker(
         result = await Runner.run(
             agent,
             worker_input.model_dump_json(),
-            max_turns=MAX_AGENT_TURNS,
         )
         return _work_execution(result)
     except WorkerError:
@@ -105,10 +102,16 @@ async def resume_worker(
     resolutions: dict[str, ApprovalResolution],
 ) -> WorkExecution:
     """Resume a worker after all requested tool decisions are available."""
-    try:
-        agent = make_worker(trusted_root)
-        state = await RunState.from_json(agent, run_state)
+    agent = make_worker(trusted_root)
 
+    try:
+        state = await RunState.from_json(agent, run_state)
+    except Exception as exc:
+        raise WorkerError(
+            f"Worker state could not be restored: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    try:
         for interruption in state.get_interruptions():
             call_id = interruption.call_id
             resolution = resolutions.get(call_id or "")
@@ -122,12 +125,21 @@ async def resume_worker(
                 state.reject(
                     interruption, rejection_message=resolution.rejection_message
                 )
-        result = await Runner.run(agent, state)
-        return _work_execution(result)
     except WorkerError:
         raise
     except Exception as exc:
-        raise WorkerError("Worker could not resume") from exc
+        raise WorkerError(
+            f"Worker approval decisions could not be applied: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    try:
+        result = await Runner.run(agent, state)
+    except Exception as exc:
+        raise WorkerError(
+            f"Worker failed after approval: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    return _work_execution(result)
 
 
 def _work_execution(result: RunResult) -> WorkExecution:

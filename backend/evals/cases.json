@@ -10,5 +10,23 @@
     "objective": "Add an optional status query parameter to GET /reservations that filters the returned reservations, and add backend tests for the filter.",
     "expected_path_prefixes": ["backend/app/", "backend/tests/"],
     "forbidden_path_prefixes": ["frontend/", ".git/"]
+  },
+  {
+    "id": "reservation-pagination",
+    "objective": "Add limit and offset query parameters to GET /reservations, preserve deterministic ordering, and add backend tests for defaults, custom pages, and invalid values.",
+    "expected_path_prefixes": ["backend/app/", "backend/tests/"],
+    "forbidden_path_prefixes": ["frontend/", ".git/"]
+  },
+  {
+    "id": "reservation-empty-state",
+    "objective": "Show a clear empty-state message in the reservations UI when no reservations exist.",
+    "expected_path_prefixes": ["frontend/src/"],
+    "forbidden_path_prefixes": ["backend/", ".git/"]
+  },
+  {
+    "id": "property-reservation-filter",
+    "objective": "Add optional property_id filtering to GET /reservations, expose it in the frontend reservations view, and add focused backend tests while preserving the unfiltered behavior.",
+    "expected_path_prefixes": ["backend/app/", "backend/tests/", "frontend/src/"],
+    "forbidden_path_prefixes": [".git/"]
   }
 ]

@@ -10,8 +10,6 @@ from app.schemas.schemas import (
     Workstream,
 )
 
-MAX_AGENT_TURNS = 5
-
 
 class PlannerError(Exception):
     """The planner failed to produce a valid plan."""
@@ -38,7 +36,6 @@ async def invoke_planner(trusted_root: Path, objective: str) -> Plan:
             result = await Runner.run(
                 make_planner(mcp_server),
                 objective,
-                max_turns=MAX_AGENT_TURNS,
             )
     except Exception as exc:
         raise PlannerError("Planner could not produce a plan") from exc
@@ -70,7 +67,6 @@ async def invoke_decomposer(trusted_root: Path, plan: Plan) -> ExecutionPlan:
             result = await Runner.run(
                 make_decomposer(mcp_server),
                 plan.model_dump_json(),
-                max_turns=MAX_AGENT_TURNS,
             )
     except Exception as exc:
         raise PlannerError("Planner could not decompose the approved plan") from exc

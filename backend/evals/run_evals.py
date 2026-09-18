@@ -29,6 +29,7 @@ from app.orchestration.state import (
 )
 from app.orchestration.worktrees import (
     Worktree,
+    commit_worktree_changes,
     create_worktree,
     delete_generated_branch,
     remove_worktree_checkout,
@@ -131,7 +132,7 @@ async def evaluate_current_workflow(
 
     with trace(
         case.id,
-        metadata={"case_id": case.id, "configuration": workflow_config},
+        metadata={"case_id": case.id, "configuration": workflow_config.value},
     ) as case_trace:
         try:
             execution_facts = await _execution_mapper(workflow_config, case)
@@ -203,6 +204,7 @@ async def execute_single_worker_workflow(case: EvalCase) -> ExecutionFacts:
         await _run_worker_until_complete(
             WorkerInput(workstream=single_workstream), worktree
         )
+        commit_worktree_changes(worktree, f"Evaluate {case.id}")
         test_outcome = run_tests(worktree.path)
         diff_output = git_diff(worktree.path)
         exc_facts = ExecutionFacts(
@@ -234,13 +236,18 @@ async def execute_planner_worker_workflow(case: EvalCase) -> ExecutionFacts:
         )
         single_workstream = Workstream(
             name=case.id,
-            task=f"{plan.summary}\n{combined_plan_steps}",
+            task=(
+                f"Original objective:\n{case.objective}\n\n"
+                f"Planner summary:\n{plan.summary}\n\n"
+                f"Plan steps:\n{combined_plan_steps}"
+            ),
             intended_paths=[],
             acceptance_criteria=[step.acceptance_criteria for step in plan.steps],
         )
         await _run_worker_until_complete(
             WorkerInput(workstream=single_workstream), worktree
         )
+        commit_worktree_changes(worktree, f"Evaluate {case.id}")
         test_outcome = run_tests(worktree.path)
         diff_output = git_diff(worktree.path)
         exc_facts = ExecutionFacts(
@@ -483,29 +490,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-# Candidate eval cases to move into cases.json after the configuration executors
-# are stable. These deliberately cover backend-only, frontend-only, and
-# full-stack work so the configuration comparison exercises different shapes.
-#
-# {
-#   "id": "reservation-pagination",
-#   "objective": "Add limit and offset query parameters to GET /reservations, preserve deterministic ordering, and add backend tests for defaults, custom pages, and invalid values.",
-#   "expected_path_prefixes": ["backend/app/", "backend/tests/"],
-#   "forbidden_path_prefixes": ["frontend/", ".git/"]
-# }
-#
-# {
-#   "id": "reservation-empty-state",
-#   "objective": "Show a clear empty-state message in the reservations UI when no reservations exist, and add a focused frontend test for that behavior.",
-#   "expected_path_prefixes": ["frontend/src/"],
-#   "forbidden_path_prefixes": ["backend/", ".git/"]
-# }
-#
-# {
-#   "id": "property-reservation-filter",
-#   "objective": "Add optional property_id filtering to GET /reservations, expose it in the frontend reservations view, and add focused backend and frontend tests while preserving the unfiltered behavior.",
-#   "expected_path_prefixes": ["backend/app/", "backend/tests/", "frontend/src/"],
-#   "forbidden_path_prefixes": [".git/"]
-# }

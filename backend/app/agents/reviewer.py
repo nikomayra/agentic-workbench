@@ -10,8 +10,6 @@ from app.schemas.schemas import (
     ReviewOutput,
 )
 
-MAX_AGENT_TURNS = 5
-
 
 class ReviewerError(Exception):
     """The reviewer failed to review implementation."""
@@ -37,7 +35,6 @@ async def invoke_reviewer(
             result = await Runner.run(
                 make_reviewer(mcp_server, instructions),
                 review_input.model_dump_json(),
-                max_turns=MAX_AGENT_TURNS,
             )
     except ReviewerError:
         raise

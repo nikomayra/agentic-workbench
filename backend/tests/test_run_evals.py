@@ -75,6 +75,37 @@ def test_evaluate_current_workflow_scores_successful_execution(monkeypatch):
     assert result.reasons == []
 
 
+def test_evaluate_current_workflow_uses_json_safe_trace_metadata(monkeypatch):
+    eval_case = construct_eval_case(
+        expected_path_prefixes=[],
+        forbidden_path_prefixes=[],
+    )
+    captured_metadata = None
+
+    def capture_trace(*_args, **kwargs):
+        nonlocal captured_metadata
+        captured_metadata = kwargs["metadata"]
+        return fake_trace()
+
+    async def fake_execution_mapper(_configuration, _case):
+        return ExecutionFacts(tests_passed=True, changed_paths=[])
+
+    monkeypatch.setattr(evals_module, "_execution_mapper", fake_execution_mapper)
+    monkeypatch.setattr(evals_module, "trace", capture_trace)
+
+    asyncio.run(
+        evaluate_current_workflow(
+            EvalConfiguration.SINGLE_WORKER,
+            eval_case,
+            make_trace_processor(),
+        )
+    )
+
+    assert captured_metadata is not None
+    assert type(captured_metadata["configuration"]) is str
+    assert captured_metadata["configuration"] == "single_worker"
+
+
 def test_evaluate_current_workflow_scores_failed_execution(monkeypatch):
     eval_case = construct_eval_case(
         expected_path_prefixes=["backend/"],

@@ -109,3 +109,22 @@ cd frontend && npm run test && npm run lint && npm run build
 ```
 
 The test suite covers deterministic workflow transitions, approval rejection, bounded repair, worktree integration and cleanup, MCP calls and repository-boundary enforcement, durable resume behavior, and eval scoring.
+
+## Evaluation Snapshot
+
+The evaluation harness runs the same five repository tasks through three configurations. Each result must finish without a workflow error, pass the repository tests, touch every required path area, and avoid forbidden paths.
+
+| Configuration | Passed | Avg. latency | Avg. tokens | Estimated cost |
+|---|---:|---:|---:|---:|
+| Single worker | 5/5 | 16.01 s | 15,780 | $0.0108 |
+| Planner + worker | 5/5 | 27.92 s | 29,079 | $0.0186 |
+| Full workflow | 5/5 | 42.61 s | 37,333 | $0.0303 |
+
+The full workflow used about **2.4× the tokens** and **2.7× the latency** of the single-worker baseline on these small tasks. This is useful evidence that extra agents should earn their cost through measurable quality or safety improvements rather than being added by default.
+
+## Known Limitations
+
+- The current benchmark contains five small tasks and one run per configuration, so its 100% pass rate is a functional checkpoint—not a statistically reliable success rate.
+- Deterministic scoring verifies workflow completion, tests, and changed-file boundaries; it does not yet measure maintainability, requirement completeness, or whether multi-agent decomposition produces better code.
+- The full workflow remains the product's explicit, review-oriented path. Automatically routing simple tasks to a single worker is deferred until repeated evals and a quality rubric show that a routing step would improve the cost/quality tradeoff.
+- Repository execution is intentionally limited to managed GitHub checkouts and allowlisted test commands. Arbitrary local paths and unrestricted shell access are outside the project scope.

@@ -101,7 +101,6 @@ OpenAI's current Agents SDK directly exposes agents, tools, handoffs, guardrails
 * Celery
 * MCP Python SDK
 * pgvector
-* Hugging Face / Transformers / PyTorch
 
 **Do not add Redis, Celery, vector databases, Kubernetes, authentication, etc. until a phase actually requires them.**
 
@@ -460,7 +459,7 @@ MCP defines a client/server interface around three especially important server p
 
 ---
 
-## Phase 7 — Evals + Observability
+## (COMPLETED) Phase 7 — Evals + Observability
 
 Create 10–20 repeatable tasks against the sample repository.
 
@@ -501,190 +500,89 @@ Tracing should make model turns, tool calls, handoffs, and guardrail behavior in
 
 ## Phase 8 — Durable Execution
 
-Only now add:
+Move long workflows out of the HTTP request while keeping PostgreSQL—not Redis—as the durable source of truth.
 
-* Redis
-* Celery
-* Background workers
-* Retry policies
-* Resume-after-failure
-* Live progress via SSE
+**Manual durability checkpoint — complete:** `CoordinatorExecution` already round-trips through JSON in `WorkflowRun.agent_state`, and a focused test proves that reloading a paused execution resumes only pending work rather than replaying completed work.
 
-Persist workflow state so a server restart does not destroy an execution.
+Finish the phase with one narrow architecture:
 
-**Start here:** Make resumption work manually before adding infrastructure. Persist the current step and each completed result, deliberately stop a run after one step, and add a function that reloads the `WorkflowRun` and continues from the next incomplete step. Once that works, move the coordinator into one Celery task using only the run ID as input; Redis carries queued work, while PostgreSQL remains the durable source of workflow state. SSE is only the live progress channel to the browser—it is not where state lives.
+```text
+FastAPI command → enqueue run_id → Celery worker
+                                  ↓
+                         load state from Postgres
+                                  ↓
+                       advance until pause/terminal
+                                  ↓
+                         persist state to Postgres
 
-Optional learning exercise: rebuild one workflow using **LangGraph** and compare the approaches. LangGraph's persistence model uses checkpoints specifically to support resumability, human intervention, memory, and fault recovery.
+Postgres status/events → SSE → React dashboard
+```
 
-**Minimal tests:** prove resuming a run does not execute an already-completed step twice.
+Build:
+
+* A background entry point that accepts only `run_id`, loads the run, advances it, and persists the next pause or terminal state
+* Celery with Redis as the queue transport
+* Idempotent retry/claim behavior so the same run is not advanced twice concurrently
+* SSE for live status updates; reconnecting clients must be able to rebuild the current view from PostgreSQL
+
+**Minimal tests:** keep the no-replay checkpoint; add one task-level test proving a retried/duplicate task does not repeat completed work.
+
+**Resume checkpoint #7:** Durable, resumable agent workflows using PostgreSQL checkpoints, Redis/Celery background execution, idempotent retries, and SSE progress updates.
 
 ---
 
 ## Phase 9 — Productization
 
-Only if the project is still interesting:
+Finish the project as a credible, reusable engineering demo—not a startup product.
 
-* GitHub issue input
-* GitHub PR creation
-* Reusable workflow templates
-* Saved agent configurations
-* Model selection
-* Team/project profiles
-* Dashboard of historical runs
-* Deployment
-* A polished public README with architecture, setup, screenshots, demo flow, limitations, and resume-ready project highlights
+### 1. Replace the fixture-only production path
 
-**Start here:** Pick one thin end-to-end integration instead of implementing the entire list. A good first slice is “GitHub issue URL → create workflow run → approved result produces a draft pull request.” Keep GitHub access in a small service/tool boundary, add the minimum token configuration, and document a demo path before adding teams, profiles, or model-selection UI.
+Keep `fixtures/sample_repo/` for tests and evals, but remove `SAMPLE_REPOSITORY_ROOT` from normal workflow execution. Introduce an application-owned repository target/workspace boundary containing at least the source URL or approved local development path, base branch, and allowlisted test command. Clone or copy each run into a managed workspace and pass that workspace explicitly through planning, workers, MCP, tests, and cleanup.
 
-At this point decide whether to extract it from `study_box` into its own repository/company idea.
+This makes the workflow usable against different repositories without letting the model choose arbitrary filesystem roots or shell commands.
 
-**Resume checkpoint #7 — final main-project update:** Rewrite the final two project bullets and skills keywords around the strongest completed evidence: multi-agent repository workflows, approvals/guardrails, parallel Git isolation, MCP, evals/observability, durable execution, and the deployed GitHub issue-to-draft-PR demo.
-
----
-
-# 6. Follow-On AI / ML Phase
-
-After the agentic 80%, go one layer deeper.
-
-## A. RAG
-
-Add repository/document knowledge retrieval.
-
-Learn:
-
-* Chunking
-* Embeddings
-* Vector similarity
-* Metadata filtering
-* Retrieval quality
-* Reranking
-* Context construction
-
-Use PostgreSQL + `pgvector` rather than introducing another database.
-
-Compare:
+### 2. Add one GitHub flow
 
 ```text
-Full-context prompting
-vs
-RAG
+GitHub issue URL
+→ managed repository checkout
+→ existing plan/work/approval workflow
+→ human final approval
+→ pushed branch + draft pull request
 ```
 
-Measure retrieval quality rather than assuming RAG helps.
+Keep GitHub API/authentication logic behind one small service boundary. Do not add profiles, teams, workflow-template builders, or a general model-selection UI.
 
-**Start here:** Create a small set of repository questions with known relevant files, store chunks and embeddings in `pgvector`, and measure whether retrieval returns those files. Compare against sending the complete small fixture before wiring retrieval into an agent.
+### 3. Add professional finishing evidence
 
-**Resume Checkpoint #8** Built a retrieval-augmented generation pipeline using embeddings, pgvector, metadata filtering, and context retrieval, and evaluated retrieval quality against full-context prompting.
+* GitHub Actions for backend tests/Ruff and frontend lint/test/build
+* A focused frontend polish pass using established components such as shadcn/ui
+* UI coverage for workflow status, plan, approvals, tests/diff, errors, and final result
+* A public README with architecture, setup, screenshot, demo flow, evaluation results, and honest limitations
+
+AI assistance is appropriate for visual/component boilerplate. Personally verify the state flow, loading/error behavior, responsive layout, accessibility basics, and every backend action exposed by the UI.
+
+**Stop condition:** one repository can enter through GitHub, complete the durable workflow, and produce a human-approved draft PR while CI passes. Then stop building and publish it.
+
+**Resume checkpoint #8 — final main-project update:** Rewrite the final two project bullets and skills keywords around the strongest completed evidence: multi-agent repository workflows, approvals/guardrails, parallel Git isolation, MCP, evals/observability, durable background execution, CI, and a GitHub issue-to-draft-PR demo.
 
 ---
 
-## B. Local Hugging Face Model
+# 6. Optional Phase 10 — Measured AI Depth
 
-Run a small open model locally.
+Do not start this phase until the Phase 9 stop condition is met. Neither item is required for the main project.
 
-Learn:
+### RAG, only if repository scale demonstrates a retrieval problem
 
-* Tokenizers
-* Tokens
-* Model loading
-* Generation parameters
-* Quantization
-* GPU/CPU memory constraints
-* Local vs API inference
+Use PostgreSQL + `pgvector` to retrieve repository/document chunks. Build a small question set with known relevant files and compare retrieval quality, workflow success, cost, and latency against the existing search/read-tool approach. Keep RAG only if it measurably improves results.
 
-Give the local model a small role such as:
+### Model routing, only if Phase 7 provides a useful quality/cost split
 
-```text
-Task classification
-Code-risk classification
-Issue categorization
-Simple routing
-```
+Use deterministic application logic—not another agent—to select a cheaper or stronger model based on task type or risk. Evaluate the same cases before and after routing. Existing model-routing work from another project is already valid experience; duplicating it here is optional.
 
-**Start here:** Use one standalone script or notebook to load a small model and classify a fixed list of examples. Record accuracy, latency, and memory use before putting the model behind an API or inside the workbench.
+**Resume checkpoint #9 — optional:** Evaluated retrieval and/or model-routing strategies against explicit quality, latency, and cost baselines rather than adding AI infrastructure without evidence.
 
-**Resume Checkpoint #9** Integrated locally hosted Hugging Face models for lightweight classification/routing tasks, comparing latency, cost, and quality against hosted APIs.
----
-
-## C. Fine-Tuning / LoRA
-
-Fine-tune a small pretrained model for one narrow task.
-
-Example:
-
-> Given an engineering ticket, classify it as frontend/backend/database/infrastructure and estimate risk.
-
-Create a dataset, train, evaluate baseline vs fine-tuned model, and integrate the winner into the workbench.
-
-Hugging Face's PEFT tooling supports parameter-efficient approaches such as LoRA, where a relatively small set of adapter parameters is trained instead of retraining the complete base model.
-
-**Start here:** Build and score a train/validation/test dataset with the untouched base model first. Fine-tune one LoRA adapter only after you have that baseline; otherwise you cannot tell whether training improved anything.
-
-**Resume Checkpoint #10** Fine-tuned a pretrained model with LoRA/PEFT on a task-specific dataset and benchmarked it against the base model before integrating it into the application.
-
----
-
-## D. Tiny Model From Scratch — Educational
-
-Train one deliberately small transformer from scratch.
-
-The goal is **understanding**, not usefulness.
-
-Learn:
-
-```text
-Tokenization
-Embeddings
-Attention
-Forward pass
-Loss
-Backpropagation
-Training loop
-Validation
-Inference
-```
-
-Keep it tiny enough to train locally or cheaply.
-
-Then compare:
-
-```text
-Tiny model from scratch
-vs
-Pretrained model
-vs
-Fine-tuned pretrained model
-```
-
-**Start here:** Keep this separate from the web application. Follow one small PyTorch transformer exercise, train on a tiny text dataset, and be able to explain the tensor flow from token IDs through embeddings and attention to loss before adding features.
-
-That gives you enough depth to intelligently discuss modern ML without pretending to be an ML researcher.
-
-**Resume Checkpoint #11** Implemented and trained a small transformer from scratch to gain hands-on experience with tokenization, attention, training loops, validation, and inference.
-
----
-
-## E. Model Routing
-
-Final integration:
-
-```text
-Cheap/local model → simple classification
-Cloud model → complicated planning/reasoning
-Specialized fine-tuned model → narrow task
-```
-
-Now the project demonstrates both **agent orchestration and practical ML architecture**.
-
-**Start here:** Begin with a deterministic Python router—an `if`/`match` decision based on task type, risk, or size—not another routing agent. Run the same labeled tasks through each candidate model, then write routing rules from measured quality, latency, and cost.
-
-**Resume Checkpoint #12** Built a model-routing layer that selects between local, fine-tuned, and cloud models based on task complexity, latency, cost, and quality requirements.
-
----
-
-# FINAL RESUME CHECKPOINT — 13
-
-**Resume Checkpoint #13** AI/ML Systems: Built and evaluated agentic workflows, RAG pipelines, local and fine-tuned models, MCP integrations, multi-model routing, and production-style AI observability/guardrails.
+Local Hugging Face inference, LoRA fine-tuning, and a tiny transformer from scratch are separate learning projects, not extensions of this workbench.
 
 
 # 7. Rules for Studying Without Falling Back Into AI Dependency
@@ -786,14 +684,13 @@ Do not read all of this in advance. Open only the phase you are implementing, re
 ### Phase 9 — Productization
 
 * [GitHub REST issues](https://docs.github.com/en/rest/issues/issues) and [pull requests](https://docs.github.com/en/rest/pulls/pulls) — one practical external integration.
-* Return to FastAPI deployment documentation only when the local workflow is demonstrable.
+* [GitHub Actions for Python](https://docs.github.com/en/actions/use-cases-and-examples/building-and-testing/building-and-testing-python) — run the existing backend and frontend checks in CI.
+* [shadcn/ui](https://ui.shadcn.com/docs) — optional component source for the final dashboard polish pass.
 
-### Follow-On AI/ML Work
+### Optional Phase 10 — Measured AI Depth
 
 * RAG: [OpenAI retrieval guide](https://developers.openai.com/api/docs/guides/retrieval) and [`pgvector`](https://github.com/pgvector/pgvector).
-* Local models: [Transformers quick tour](https://huggingface.co/docs/transformers/quicktour).
-* LoRA: [PEFT quick tour](https://huggingface.co/docs/peft/quicktour).
-* Tiny transformer: [PyTorch tutorials](https://docs.pytorch.org/tutorials/); keep this educational experiment separate from the workbench.
+* Model routing: reuse the Phase 7 harness to compare quality, latency, and cost before writing routing rules.
 
 The Agents SDK quickstart progresses from a first agent to tools, multiple agents/handoffs, and tracing, which maps well to the early sequence here.
 
