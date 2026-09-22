@@ -19,6 +19,7 @@ class WorkflowRunStatus(StrEnum):
     Cancelled = "cancelled"
     Processing = "processing"
     PendingPlanApproval = "pending_plan_approval"
+    Queued = "queued"
     PendingToolApproval = "pending_tool_approval"
     PendingFinalApproval = "pending_final_approval"
     Completed = "completed"

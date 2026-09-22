@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -21,3 +22,10 @@ async def get_async_db_session() -> AsyncGenerator[AsyncSession]:
     """FastAPI dependency that yields an async SQLAlchemy session."""
     async with AsyncSessionLocal() as async_session:
         yield async_session
+
+
+@asynccontextmanager
+async def get_async_db_ctx() -> AsyncGenerator[AsyncSession]:
+    """Yield a session to code running outside FastAPI's dependency system."""
+    async with AsyncSessionLocal() as session:
+        yield session

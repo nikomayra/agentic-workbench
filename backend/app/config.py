@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     )
     cors_origins: str = "http://localhost:5173"
     openai_api_key: str = ""
+    redis_url: str = "redis://:workbench@localhost:6379/0"
 
 
 settings = Settings()

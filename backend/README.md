@@ -25,11 +25,12 @@ The selected repository must define an allowed test command. The bundled fixture
 uv sync
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
+uv run celery -A app.tasks.celery_app:celery_app worker --loglevel=INFO --pool=solo
 uv run pytest
 uv run ruff check .
 ```
 
-Docker Compose starts the Redis-backed Celery worker alongside the API. Inspect the repository MCP server with `uv run mcp dev run_mcp.py`.
+Docker Compose starts PostgreSQL and Redis. During local development, run the API and Celery worker as separate processes from `backend/`; `--pool=solo` keeps worker execution sequential and easier to debug. Inspect the repository MCP server with `uv run mcp dev run_mcp.py`.
 
 ## Constraints
 

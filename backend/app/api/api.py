@@ -1,11 +1,8 @@
-import asyncio
-import datetime
 import json
 import uuid
-from typing import NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import func, inspect, select
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.planning import PlannerError, invoke_planner
@@ -20,139 +17,26 @@ from app.models.models import (
 )
 from app.orchestration.coordinator import (
     finalize_coordinator,
-    resume_coordinator,
-    start_coordinator,
-)
-from app.orchestration.state import (
-    CoordinatorExecution,
-    CoordinatorStages,
-    pending_approval_requests,
 )
 from app.repository.operations import SAMPLE_REPOSITORY_ROOT
 from app.schemas.schemas import (
     ApprovalRejectRequest,
-    ApprovalResolution,
     ApprovalResponse,
     FinalApprovalRequest,
-    Plan,
     WorkflowRunCreate,
     WorkflowRunResponse,
 )
+from app.services.workflow_execution import (
+    _decide_approval,
+    _fail_workflow,
+    _save_coordinator_execution,
+    _saved_coordinator_execution,
+)
+from app.tasks.workflow_tasks import enqueue_workflow
 
 router = APIRouter()
 
 WORKFLOW_ERRORS = (PlannerError, ReviewerError, WorkerError, RuntimeError)
-WORKFLOW_TIMEOUT_SECONDS = 120
-
-
-def _saved_plan(workflow_run: WorkflowRun) -> Plan:
-    if workflow_run.plan is None:
-        raise HTTPException(status_code=409, detail="Workflow has no saved plan.")
-    return Plan.model_validate(workflow_run.plan)
-
-
-def _saved_coordinator_execution(workflow_run: WorkflowRun) -> CoordinatorExecution:
-    if workflow_run.agent_state is None:
-        raise HTTPException(
-            status_code=409, detail="Workflow has no saved coordinator execution."
-        )
-    return CoordinatorExecution.model_validate(workflow_run.agent_state)
-
-
-async def _fail_workflow(
-    workflow_run: WorkflowRun,
-    db: AsyncSession,
-    exc: Exception,
-    *,
-    message: str | None = None,
-) -> NoReturn:
-    error_message = message or str(exc)
-    workflow_run.status = WorkflowRunStatus.Failed
-    workflow_run.error = error_message
-    await db.commit()
-    raise HTTPException(status_code=502, detail=error_message) from exc
-
-
-async def _save_coordinator_execution(
-    workflow_run: WorkflowRun,
-    execution: CoordinatorExecution,
-    db: AsyncSession,
-) -> None:
-    workflow_run.agent_state = execution.model_dump(mode="json")
-    workflow_run.error = None
-
-    if execution.stage == CoordinatorStages.COMPLETED:
-        workflow_run.status = WorkflowRunStatus.Completed
-        await db.commit()
-        return
-
-    if execution.stage == CoordinatorStages.REJECTED:
-        workflow_run.status = WorkflowRunStatus.Cancelled
-        await db.commit()
-        return
-
-    if execution.stage in (
-        CoordinatorStages.AWAITING_APPROVALS,
-        CoordinatorStages.MERGE_REPAIR_AWAITING_APPROVALS,
-        CoordinatorStages.REVIEW_FIX_AWAITING_APPROVALS,
-    ):
-        workflow_run.status = WorkflowRunStatus.PendingToolApproval
-    elif execution.stage == CoordinatorStages.AWAITING_FINAL_APPROVAL:
-        workflow_run.status = WorkflowRunStatus.PendingFinalApproval
-    else:
-        raise RuntimeError(
-            f"Coordinator returned a non-pausable stage: {execution.stage}."
-        )
-
-    if workflow_run.status == WorkflowRunStatus.PendingToolApproval:
-        requests = pending_approval_requests(execution)
-        if not requests:
-            raise RuntimeError("Paused coordinator has no approval requests.")
-
-        for request in requests:
-            db.add(
-                Approval(
-                    workflow_run_id=workflow_run.id,
-                    call_id=request.call_id,
-                    tool_name=request.tool_name,
-                    summary=request.summary,
-                    details=request.details,
-                )
-            )
-
-    await db.commit()
-
-
-async def _continue_workflow(
-    workflow_run: WorkflowRun,
-    db: AsyncSession,
-    *,
-    resolutions: dict[str, ApprovalResolution] | None = None,
-) -> None:
-    try:
-        async with asyncio.timeout(WORKFLOW_TIMEOUT_SECONDS):
-            saved_plan = _saved_plan(workflow_run)
-            if resolutions is not None:
-                saved_state = _saved_coordinator_execution(workflow_run)
-                execution = await resume_coordinator(
-                    saved_plan, saved_state, resolutions
-                )
-            else:
-                execution = await start_coordinator(saved_plan)
-            await _save_coordinator_execution(workflow_run, execution, db)
-    except TimeoutError as exc:
-        await _fail_workflow(
-            workflow_run,
-            db,
-            exc,
-            message=f"Workflow timed out after {WORKFLOW_TIMEOUT_SECONDS} seconds.",
-        )
-    except HTTPException:
-        raise
-    # This route boundary records unexpected workflow failures instead of leaving
-    # a durable run stuck in the Processing state.
-    except Exception as exc:  # noqa: BLE001
-        await _fail_workflow(workflow_run, db, exc)
 
 
 @router.post("/runs")
@@ -226,81 +110,10 @@ async def approve_plan(
     if workflow_run.status != WorkflowRunStatus.PendingPlanApproval:
         raise HTTPException(status_code=409, detail="Plan is not awaiting approval.")
 
-    workflow_run.status = WorkflowRunStatus.Processing
+    workflow_run.status = WorkflowRunStatus.Queued
     await db.commit()
-    await _continue_workflow(workflow_run, db)
-
-    if workflow_run.status in (
-        WorkflowRunStatus.PendingToolApproval,
-        WorkflowRunStatus.PendingFinalApproval,
-    ):
-        response.status_code = 202
-
-    return WorkflowRunResponse.model_validate(workflow_run, from_attributes=True)
-
-
-async def _decide_approval(
-    approval_id: uuid.UUID,
-    decision: ApprovalDecision,
-    rejection_message: str | None,
-    response: Response,
-    db: AsyncSession,
-) -> WorkflowRunResponse:
-    approval = await db.get(Approval, approval_id)
-    if not approval:
-        raise HTTPException(status_code=404, detail="Approval not found.")
-    if approval.decision != ApprovalDecision.Pending:
-        raise HTTPException(status_code=409, detail="Approval already has a decision.")
-
-    workflow_run = await db.get(WorkflowRun, approval.workflow_run_id)
-    if not workflow_run:
-        raise HTTPException(status_code=404, detail="Workflow run not found.")
-    if workflow_run.status != WorkflowRunStatus.PendingToolApproval:
-        raise HTTPException(
-            status_code=409, detail="Workflow is not awaiting tool approval."
-        )
-
-    approval.decision = decision
-    approval.rejection_message = rejection_message
-    approval.decided_at = datetime.datetime.now(datetime.UTC)
-    await db.flush()
-
-    pending_count = await db.scalar(
-        select(func.count())
-        .select_from(Approval)
-        .where(
-            Approval.workflow_run_id == workflow_run.id,
-            Approval.decision == ApprovalDecision.Pending,
-        )
-    )
-    if pending_count:
-        await db.commit()
-        response.status_code = 202
-        return WorkflowRunResponse.model_validate(workflow_run, from_attributes=True)
-
-    approvals = (
-        await db.scalars(
-            select(Approval).where(Approval.workflow_run_id == workflow_run.id)
-        )
-    ).all()
-
-    resolutions = {
-        item.call_id: ApprovalResolution(
-            decision=item.decision,
-            rejection_message=item.rejection_message,
-        )
-        for item in approvals
-    }
-
-    workflow_run.status = WorkflowRunStatus.Processing
-    await db.commit()
-    await _continue_workflow(workflow_run, db, resolutions=resolutions)
-
-    if workflow_run.status in (
-        WorkflowRunStatus.PendingToolApproval,
-        WorkflowRunStatus.PendingFinalApproval,
-    ):
-        response.status_code = 202
+    enqueue_workflow(workflow_run.id)
+    response.status_code = 202
 
     return WorkflowRunResponse.model_validate(workflow_run, from_attributes=True)
 
@@ -338,13 +151,16 @@ async def approve_tool(
     response: Response,
     db: AsyncSession = Depends(get_async_db_session),
 ) -> WorkflowRunResponse:
-    return await _decide_approval(
+    workflow_run = await _decide_approval(
         approval_id,
         ApprovalDecision.Approved,
         None,
         response,
         db,
     )
+    if workflow_run.status == WorkflowRunStatus.Queued:
+        enqueue_workflow(workflow_run.id)
+    return workflow_run
 
 
 @router.post("/approvals/{approval_id}/reject")
@@ -354,13 +170,16 @@ async def reject_tool(
     response: Response,
     db: AsyncSession = Depends(get_async_db_session),
 ) -> WorkflowRunResponse:
-    return await _decide_approval(
+    workflow_run = await _decide_approval(
         approval_id,
         ApprovalDecision.Rejected,
         payload.rejection_message,
         response,
         db,
     )
+    if workflow_run.status == WorkflowRunStatus.Queued:
+        enqueue_workflow(workflow_run.id)
+    return workflow_run
 
 
 @router.get("/approvals/{approval_id}")

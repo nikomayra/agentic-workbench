@@ -13,6 +13,8 @@ dependencies = [
     "openai-agents>=0.21.0",
     "mcp[cli]>=2.0.0",
     "tqdm>=4.70.0",
+    "redis>=8.1.0",
+    "celery>=5.6.3",
 ]
 
 [dependency-groups]
