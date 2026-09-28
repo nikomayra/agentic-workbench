@@ -5,9 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.planning import PlannerError, invoke_planner
-from app.agents.reviewer import ReviewerError
-from app.agents.workers import WorkerError
 from app.db import get_async_db_session
 from app.models.models import (
     Approval,
@@ -15,10 +12,6 @@ from app.models.models import (
     WorkflowRun,
     WorkflowRunStatus,
 )
-from app.orchestration.coordinator import (
-    finalize_coordinator,
-)
-from app.repository.operations import SAMPLE_REPOSITORY_ROOT
 from app.schemas.schemas import (
     ApprovalRejectRequest,
     ApprovalResponse,
@@ -27,39 +20,31 @@ from app.schemas.schemas import (
     WorkflowRunResponse,
 )
 from app.services.workflow_execution import (
-    _decide_approval,
-    _fail_workflow,
-    _save_coordinator_execution,
-    _saved_coordinator_execution,
+    WorkflowExecutionError,
+    WorkflowNotFoundError,
+    decide_approval,
+    finalize_workflow,
 )
 from app.tasks.workflow_tasks import enqueue_workflow
 
 router = APIRouter()
 
-WORKFLOW_ERRORS = (PlannerError, ReviewerError, WorkerError, RuntimeError)
-
 
 @router.post("/runs")
 async def create_run(
     payload: WorkflowRunCreate,
+    response: Response,
     db: AsyncSession = Depends(get_async_db_session),
 ) -> WorkflowRunResponse:
     workflow_run = WorkflowRun(
         objective=payload.objective,
-        status=WorkflowRunStatus.Processing,
+        status=WorkflowRunStatus.Queued,
     )
     db.add(workflow_run)
     await db.commit()
 
-    try:
-        plan = await invoke_planner(SAMPLE_REPOSITORY_ROOT, payload.objective)
-    except PlannerError as exc:
-        await _fail_workflow(workflow_run, db, exc)
-
-    workflow_run.plan = plan.model_dump(mode="json")
-    workflow_run.status = WorkflowRunStatus.PendingPlanApproval
-    workflow_run.error = None
-    await db.commit()
+    enqueue_workflow(workflow_run.id)
+    response.status_code = 202
 
     return WorkflowRunResponse.model_validate(workflow_run, from_attributes=True)
 
@@ -134,14 +119,36 @@ async def finalize_run(
         )
 
     try:
-        execution = finalize_coordinator(
-            _saved_coordinator_execution(workflow_run),
-            approved=payload.approved,
-        )
-        await _save_coordinator_execution(workflow_run, execution, db)
-    except WORKFLOW_ERRORS as exc:
-        await _fail_workflow(workflow_run, db, exc)
+        await finalize_workflow(workflow_run, payload.approved, db)
+    except WorkflowExecutionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    return WorkflowRunResponse.model_validate(workflow_run, from_attributes=True)
+
+
+async def _decide_tool_approval(
+    approval_id: uuid.UUID,
+    decision: ApprovalDecision,
+    rejection_message: str | None,
+    response: Response,
+    db: AsyncSession,
+) -> WorkflowRunResponse:
+    try:
+        workflow_run = await decide_approval(
+            approval_id,
+            decision,
+            rejection_message,
+            db,
+        )
+    except WorkflowNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkflowExecutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if workflow_run.status == WorkflowRunStatus.Queued:
+        enqueue_workflow(workflow_run.id)
+
+    response.status_code = 202
     return WorkflowRunResponse.model_validate(workflow_run, from_attributes=True)
 
 
@@ -151,16 +158,13 @@ async def approve_tool(
     response: Response,
     db: AsyncSession = Depends(get_async_db_session),
 ) -> WorkflowRunResponse:
-    workflow_run = await _decide_approval(
+    return await _decide_tool_approval(
         approval_id,
         ApprovalDecision.Approved,
         None,
         response,
         db,
     )
-    if workflow_run.status == WorkflowRunStatus.Queued:
-        enqueue_workflow(workflow_run.id)
-    return workflow_run
 
 
 @router.post("/approvals/{approval_id}/reject")
@@ -170,16 +174,13 @@ async def reject_tool(
     response: Response,
     db: AsyncSession = Depends(get_async_db_session),
 ) -> WorkflowRunResponse:
-    workflow_run = await _decide_approval(
+    return await _decide_tool_approval(
         approval_id,
         ApprovalDecision.Rejected,
         payload.rejection_message,
         response,
         db,
     )
-    if workflow_run.status == WorkflowRunStatus.Queued:
-        enqueue_workflow(workflow_run.id)
-    return workflow_run
 
 
 @router.get("/approvals/{approval_id}")

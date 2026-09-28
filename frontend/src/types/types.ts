@@ -19,6 +19,7 @@ export const WorkflowStatusSchema = z.enum([
   "cancelled",
   "processing",
   "pending_plan_approval",
+  "queued",
   "pending_tool_approval",
   "pending_final_approval",
   "completed",
