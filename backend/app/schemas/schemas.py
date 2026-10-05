@@ -106,6 +106,7 @@ class WorkflowRunResponse(BaseModel):
     plan: Plan | None
     error: str | None
     created_at: datetime.datetime
+    updated_at: datetime.datetime | None
 
 
 class ApprovalRejectRequest(BaseModel):

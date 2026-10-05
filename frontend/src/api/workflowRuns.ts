@@ -12,6 +12,41 @@ import * as z from "zod";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
+export const subscribeToWorkflowRun = (
+  runId: string,
+  onWorkflow: (workflow: Workflow) => void,
+  onError: (error: Error) => void,
+): EventSource => {
+  const source = new EventSource(`${BASE_URL}/runs/${runId}/events`);
+
+  source.addEventListener("workflow", (event: MessageEvent<string>) => {
+    try {
+      const data: unknown = JSON.parse(event.data);
+      const workflow = WorkflowResponseSchema.parse(data);
+      onWorkflow(workflow);
+
+      if (
+        workflow.status === "cancelled" ||
+        workflow.status === "completed" ||
+        workflow.status === "failed"
+      ) {
+        source.close();
+      }
+    } catch (error: unknown) {
+      onError(
+        error instanceof Error
+          ? error
+          : new Error("Invalid workflow update received"),
+      );
+    }
+  });
+  source.onerror = (): void => {
+    onError(new Error("Live updates disconnected; retrying automatically."));
+  };
+
+  return source;
+};
+
 export const createWorkflowRun = async (
   payload: WorkflowCreate,
 ): Promise<Workflow> => {

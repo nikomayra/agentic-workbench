@@ -34,6 +34,7 @@ export const WorkflowResponseSchema = z.object({
   plan: PlanSchema.nullable(),
   error: z.string().nullable(),
   created_at: z.iso.datetime(),
+  updated_at: z.iso.datetime().nullable(),
 });
 export type Workflow = z.infer<typeof WorkflowResponseSchema>;
 

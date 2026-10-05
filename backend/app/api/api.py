@@ -1,11 +1,15 @@
+import asyncio
+import datetime
 import json
+import time
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_async_db_session
+from app.db import get_async_db_ctx, get_async_db_session
 from app.models.models import (
     Approval,
     ApprovalDecision,
@@ -96,6 +100,7 @@ async def approve_plan(
         raise HTTPException(status_code=409, detail="Plan is not awaiting approval.")
 
     workflow_run.status = WorkflowRunStatus.Queued
+    workflow_run.updated_at = datetime.datetime.now(datetime.UTC)
     await db.commit()
     enqueue_workflow(workflow_run.id)
     response.status_code = 202
@@ -215,3 +220,74 @@ async def list_approvals(
         ApprovalResponse.model_validate(approval, from_attributes=True)
         for approval in approvals
     ]
+
+
+TERMINAL_WORKFLOW_STATUSES = {
+    WorkflowRunStatus.Cancelled,
+    WorkflowRunStatus.Completed,
+    WorkflowRunStatus.Failed,
+}
+SSE_HEARTBEAT_SECONDS = 15.0
+SSE_POLL_SECONDS = 1.0
+
+
+@router.get("/runs/{run_id}/events")
+async def stream_run_status(run_id: uuid.UUID, request: Request) -> StreamingResponse:
+    # Validate before opening a successful streaming response. The generator uses
+    # short-lived sessions so one browser connection does not hold a DB session.
+    async with get_async_db_ctx() as db:
+        if await db.get(WorkflowRun, run_id) is None:
+            raise HTTPException(status_code=404, detail="Workflow run not found.")
+
+    return StreamingResponse(
+        _workflow_status_events(run_id, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _workflow_status_events(run_id: uuid.UUID, request: Request):
+    last_snapshot: str | None = None
+    last_send_time = time.monotonic()
+
+    while not await request.is_disconnected():
+        async with get_async_db_ctx() as db:
+            workflow_run = await db.get(WorkflowRun, run_id)
+
+        if workflow_run is None:
+            return
+
+        response = WorkflowRunResponse.model_validate(
+            workflow_run,
+            from_attributes=True,
+        )
+        snapshot = response.model_dump_json()
+
+        if snapshot != last_snapshot:
+            yield _format_sse(snapshot, event="workflow")
+            last_snapshot = snapshot
+            last_send_time = time.monotonic()
+        elif time.monotonic() - last_send_time >= SSE_HEARTBEAT_SECONDS:
+            yield ": heartbeat\n\n"
+            last_send_time = time.monotonic()
+
+        if workflow_run.status in TERMINAL_WORKFLOW_STATUSES:
+            return
+
+        await asyncio.sleep(SSE_POLL_SECONDS)
+
+
+def _format_sse(data: str, event: str | None = None) -> str:
+    """Format one named or unnamed Server-Sent Event."""
+    sse_lines: list[str] = []
+    if event:
+        sse_lines.append(f"event: {event}")
+
+    for line in data.splitlines():
+        sse_lines.append(f"data: {line}")
+
+    return "\n".join(sse_lines) + "\n\n"

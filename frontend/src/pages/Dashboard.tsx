@@ -18,6 +18,7 @@ import {
   rejectApprovalItem,
   approveWorkflowRun,
   finalizeWorkflowRun,
+  subscribeToWorkflowRun,
 } from "@/api/workflowRuns";
 import ApprovalsList from "@/components/ApprovalsList";
 import NewWorkflowForm from "@/components/NewWorkflowForm";
@@ -29,6 +30,7 @@ const Dashboard = (): ReactNode => {
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
   const [approvals, setApprovals] = useState<Approval[] | null>(null);
   const [error, setError] = useState<string>("");
+  const [liveUpdateError, setLiveUpdateError] = useState<string>("");
   const [isPlanning, setIsPlanning] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDeciding, setIsDeciding] = useState(false);
@@ -80,6 +82,55 @@ const Dashboard = (): ReactNode => {
         setError(err instanceof Error ? err.message : "Unknown error");
       });
   }, []);
+
+  useEffect(() => {
+    const workflowId = activeWorkflow?.id;
+    if (!workflowId) {
+      return;
+    }
+
+    const source = subscribeToWorkflowRun(
+      workflowId,
+      (workflow) => {
+        setLiveUpdateError("");
+        setActiveWorkflow(workflow);
+        setWorkflows((current) => {
+          if (!current) {
+            return [workflow];
+          }
+
+          const workflowExists = current.some(
+            (item) => item.id === workflow.id,
+          );
+          if (!workflowExists) {
+            return [workflow, ...current];
+          }
+
+          return current.map((item) =>
+            item.id === workflow.id ? workflow : item,
+          );
+        });
+
+        void fetchAllWorkflowRunApprovalItems(workflow.id)
+          .then(setApprovals)
+          .catch((err: unknown) => {
+            setLiveUpdateError(
+              err instanceof Error
+                ? err.message
+                : "Failed to refresh workflow approvals",
+            );
+          });
+      },
+      (err: unknown) =>
+        setLiveUpdateError(
+          err instanceof Error
+            ? err.message
+            : "Failed to connect to live updates",
+        ),
+    );
+
+    return () => source.close();
+  }, [activeWorkflow?.id]);
 
   const loadWorkflow = async (workflowId: string): Promise<void> => {
     setIsLoading(true);
@@ -188,6 +239,7 @@ const Dashboard = (): ReactNode => {
     <div className="flex min-h-0 flex-1 flex-col gap-4 lg:overflow-hidden">
       <ServerStatus />
       {error && <p>{error}</p>}
+      {liveUpdateError && <p>{liveUpdateError}</p>}
       <button
         onClick={() => refreshActiveWorkflow()}
         disabled={isRefreshing}

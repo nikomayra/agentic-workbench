@@ -41,6 +41,11 @@ class WorkflowNotFoundError(WorkflowExecutionError):
     """A requested workflow or approval does not exist."""
 
 
+def _utcnow() -> datetime.datetime:
+    """Timezone-aware UTC timestamp"""
+    return datetime.datetime.now(datetime.UTC)
+
+
 def _saved_plan(workflow_run: WorkflowRun) -> Plan:
     if workflow_run.plan is None:
         raise WorkflowExecutionError("Workflow has no saved plan.")
@@ -63,6 +68,8 @@ async def _fail_workflow(
     error_message = message or str(exc)
     workflow_run.status = WorkflowRunStatus.Failed
     workflow_run.error = error_message
+    workflow_run.claimed_at = None
+    workflow_run.updated_at = _utcnow()
     await db.commit()
     raise WorkflowExecutionError(error_message) from exc
 
@@ -77,11 +84,15 @@ async def _save_coordinator_execution(
 
     if execution.stage == CoordinatorStages.COMPLETED:
         workflow_run.status = WorkflowRunStatus.Completed
+        workflow_run.claimed_at = None
+        workflow_run.updated_at = _utcnow()
         await db.commit()
         return
 
     if execution.stage == CoordinatorStages.REJECTED:
         workflow_run.status = WorkflowRunStatus.Cancelled
+        workflow_run.claimed_at = None
+        workflow_run.updated_at = _utcnow()
         await db.commit()
         return
 
@@ -91,8 +102,13 @@ async def _save_coordinator_execution(
         CoordinatorStages.REVIEW_FIX_AWAITING_APPROVALS,
     ):
         workflow_run.status = WorkflowRunStatus.PendingToolApproval
+        workflow_run.claimed_at = None
+        workflow_run.updated_at = _utcnow()
+
     elif execution.stage == CoordinatorStages.AWAITING_FINAL_APPROVAL:
         workflow_run.status = WorkflowRunStatus.PendingFinalApproval
+        workflow_run.claimed_at = None
+        workflow_run.updated_at = _utcnow()
     else:
         raise RuntimeError(
             f"Coordinator returned a non-pausable stage: {execution.stage}."
@@ -165,13 +181,12 @@ async def decide_approval(
     if not workflow_run:
         raise WorkflowNotFoundError("Workflow run not found.")
     if workflow_run.status != WorkflowRunStatus.PendingToolApproval:
-        raise WorkflowExecutionError(
-            "Workflow is not awaiting tool approval."
-        )
+        raise WorkflowExecutionError("Workflow is not awaiting tool approval.")
 
     approval.decision = decision
     approval.rejection_message = rejection_message
     approval.decided_at = datetime.datetime.now(datetime.UTC)
+    workflow_run.updated_at = _utcnow()
     await db.flush()
 
     pending_count = await db.scalar(
@@ -187,6 +202,7 @@ async def decide_approval(
         return workflow_run
 
     workflow_run.status = WorkflowRunStatus.Queued
+    workflow_run.claimed_at = None
     await db.commit()
     return workflow_run
 
@@ -202,7 +218,12 @@ async def _claim_queued_workflow(
             WorkflowRun.id == run_id,
             WorkflowRun.status == WorkflowRunStatus.Queued,
         )
-        .values(status=WorkflowRunStatus.Processing, error=None)
+        .values(
+            status=WorkflowRunStatus.Processing,
+            error=None,
+            claimed_at=_utcnow(),
+            updated_at=_utcnow(),
+        )
         .returning(WorkflowRun.id)
     )
     await db.commit()
@@ -229,9 +250,7 @@ async def _saved_approval_resolutions(
         )
     ).all()
     if any(approval.decision == ApprovalDecision.Pending for approval in approvals):
-        raise WorkflowExecutionError(
-            "Workflow still has pending approval decisions."
-        )
+        raise WorkflowExecutionError("Workflow still has pending approval decisions.")
 
     return {
         approval.call_id: ApprovalResolution(
@@ -244,14 +263,54 @@ async def _saved_approval_resolutions(
 
 async def _save_workflow_plan(workflow_run: WorkflowRun, db: AsyncSession) -> None:
     try:
-        plan = await invoke_planner(SAMPLE_REPOSITORY_ROOT, workflow_run.objective)
+        async with asyncio.timeout(WORKFLOW_TIMEOUT_SECONDS):
+            plan = await invoke_planner(
+                SAMPLE_REPOSITORY_ROOT,
+                workflow_run.objective,
+            )
+    except TimeoutError as exc:
+        await _fail_workflow(
+            workflow_run,
+            db,
+            exc,
+            message=f"Planning timed out after {WORKFLOW_TIMEOUT_SECONDS} seconds.",
+        )
     except PlannerError as exc:
+        await _fail_workflow(workflow_run, db, exc)
+    except Exception as exc:  # noqa: BLE001
         await _fail_workflow(workflow_run, db, exc)
 
     workflow_run.plan = plan.model_dump(mode="json")
     workflow_run.status = WorkflowRunStatus.PendingPlanApproval
     workflow_run.error = None
+    workflow_run.claimed_at = None
+    workflow_run.updated_at = _utcnow()
     await db.commit()
+
+
+async def requeue_stale_workflows(before: datetime.datetime) -> list[uuid.UUID]:
+    """Release stale database claims and return the runs that need new tasks."""
+    async with get_async_db_ctx() as db:
+        run_ids = list(
+            (
+                await db.scalars(
+                    update(WorkflowRun)
+                    .where(
+                        WorkflowRun.status == WorkflowRunStatus.Processing,
+                        WorkflowRun.claimed_at.is_not(None),
+                        WorkflowRun.claimed_at <= before,
+                    )
+                    .values(
+                        status=WorkflowRunStatus.Queued,
+                        claimed_at=None,
+                        updated_at=_utcnow(),
+                    )
+                    .returning(WorkflowRun.id)
+                )
+            ).all()
+        )
+        await db.commit()
+        return run_ids
 
 
 async def finalize_workflow(

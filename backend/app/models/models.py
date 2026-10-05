@@ -47,6 +47,12 @@ class WorkflowRun(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, default=_utcnow
     )
+    updated_at: Mapped[datetime.datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True, default=_utcnow
+    )
+    claimed_at: Mapped[datetime.datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
 
     approvals: Mapped[list[Approval]] = relationship(
         back_populates="workflow_run",

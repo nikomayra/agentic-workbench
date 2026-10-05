@@ -498,7 +498,7 @@ Tracing should make model turns, tool calls, handoffs, and guardrail behavior in
 
 ---
 
-## Phase 8 — Durable Execution
+## (COMPLETED) Phase 8 — Durable Execution
 
 Move long workflows out of the HTTP request while keeping PostgreSQL—not Redis—as the durable source of truth.
 
