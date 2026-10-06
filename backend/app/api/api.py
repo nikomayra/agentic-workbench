@@ -43,6 +43,7 @@ async def create_run(
     workflow_run = WorkflowRun(
         objective=payload.objective,
         status=WorkflowRunStatus.Queued,
+        repository_target=payload.repository_target.model_dump(mode="json"),
     )
     db.add(workflow_run)
     await db.commit()

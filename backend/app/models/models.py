@@ -54,6 +54,10 @@ class WorkflowRun(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
 
+    repository_target: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    issue_url: Mapped[str | None] = mapped_column(TEXT(), nullable=True)
+    pull_request_url: Mapped[str | None] = mapped_column(TEXT(), nullable=True)
+
     approvals: Mapped[list[Approval]] = relationship(
         back_populates="workflow_run",
         cascade="all, delete-orphan",

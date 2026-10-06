@@ -1,6 +1,7 @@
 import datetime
 import uuid
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
@@ -91,8 +92,30 @@ class ApprovalResolution(BaseModel):
     rejection_message: str | None = None
 
 
+class RepositoryTarget(BaseModel):
+    """Durable configuration describing the repository assigned to a workflow."""
+
+    clone_url: str = Field(min_length=1)
+    base_branch: str = Field(default="main", min_length=1)
+    test_command: list[str] = Field(min_length=1)
+    test_working_directory: str = "."
+
+    @model_validator(mode="after")
+    def validate_test_configuration(self) -> RepositoryTarget:
+        if any(not argument.strip() for argument in self.test_command):
+            raise ValueError("Test command arguments cannot be empty.")
+
+        test_directory = Path(self.test_working_directory)
+        if test_directory.is_absolute() or ".." in test_directory.parts:
+            raise ValueError(
+                "Test working directory must remain inside the repository."
+            )
+        return self
+
+
 class WorkflowRunCreate(BaseModel):
     objective: str
+    repository_target: RepositoryTarget
 
 
 class FinalApprovalRequest(BaseModel):
@@ -103,6 +126,9 @@ class WorkflowRunResponse(BaseModel):
     id: uuid.UUID
     objective: str
     status: WorkflowRunStatus
+    repository_target: RepositoryTarget
+    issue_url: str | None
+    pull_request_url: str | None
     plan: Plan | None
     error: str | None
     created_at: datetime.datetime

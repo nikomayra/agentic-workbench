@@ -27,10 +27,21 @@ export const WorkflowStatusSchema = z.enum([
 ]);
 export type WorkflowStatus = z.infer<typeof WorkflowStatusSchema>;
 
+export const RepositoryTargetSchema = z.object({
+  clone_url: z.string(),
+  base_branch: z.string(),
+  test_command: z.array(z.string()),
+  test_working_directory: z.string(),
+});
+export type RepositoryTarget = z.infer<typeof RepositoryTargetSchema>;
+
 export const WorkflowResponseSchema = z.object({
   id: z.uuid(),
   objective: z.string(),
   status: WorkflowStatusSchema,
+  repository_target: RepositoryTargetSchema,
+  issue_url: z.string().nullable(),
+  pull_request_url: z.string().nullable(),
   plan: PlanSchema.nullable(),
   error: z.string().nullable(),
   created_at: z.iso.datetime(),
@@ -40,6 +51,7 @@ export type Workflow = z.infer<typeof WorkflowResponseSchema>;
 
 export const WorkflowCreateSchema = z.object({
   objective: z.string(),
+  repository_target: RepositoryTargetSchema,
 });
 export type WorkflowCreate = z.infer<typeof WorkflowCreateSchema>;
 

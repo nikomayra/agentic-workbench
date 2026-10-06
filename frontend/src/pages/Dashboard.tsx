@@ -214,10 +214,7 @@ const Dashboard = (): ReactNode => {
     await refreshActiveWorkflow();
   };
 
-  const createWorkflow = async (objective: string): Promise<void> => {
-    const payload: WorkflowCreate = {
-      objective,
-    };
+  const createWorkflow = async (payload: WorkflowCreate): Promise<void> => {
     try {
       setIsPlanning(true);
       const workflow = await createWorkflowRun(payload);

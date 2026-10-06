@@ -26,3 +26,4 @@ postgres_data/
 
 /fixtures/sample_repo/.git/
 /fixtures/.agent_worktrees/
+/backend/.agent_workspaces/
