@@ -3,11 +3,11 @@ from pathlib import Path
 import pytest
 
 from app.repository.operations import (
-    SAMPLE_REPOSITORY_ROOT,
     list_files,
     read_file,
     search_code,
 )
+from tests.factories import SAMPLE_REPOSITORY_ROOT
 
 
 def test_list_files_returns_relative_source_paths():

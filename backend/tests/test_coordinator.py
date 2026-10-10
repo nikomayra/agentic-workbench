@@ -43,6 +43,7 @@ from tests.factories import (
     merge_conflict_state,
     pending_execution,
     sample_plan,
+    sample_repository_workspace,
 )
 
 
@@ -146,19 +147,25 @@ def test_start_merge_conflict_repair_saves_pending_execution(monkeypatch):
     )
     received_inputs = []
 
-    async def fake_invoke_worker(trusted_root, worker_input):
-        received_inputs.append((trusted_root, worker_input))
+    async def fake_invoke_worker(trusted_root, target, worker_input):
+        received_inputs.append((trusted_root, target, worker_input))
         return pending_execution
 
     monkeypatch.setattr(coordinator_module, "invoke_worker", fake_invoke_worker)
 
-    result = asyncio.run(start_merge_conflict_repair(merge_conflict_state()))
+    result = asyncio.run(
+        start_merge_conflict_repair(
+            merge_conflict_state(),
+            sample_repository_workspace(),
+        )
+    )
 
     assert result.stage == CoordinatorStages.MERGE_REPAIR_AWAITING_APPROVALS
     assert result.merge_conflict is not None
     assert result.merge_conflict.repair_execution == pending_execution
     assert received_inputs[0][0] == Path("/tmp/integration")
-    assert received_inputs[0][1].workstream.intended_paths == ["frontend/src/App.tsx"]
+    assert received_inputs[0][1] == sample_repository_workspace().target
+    assert received_inputs[0][2].workstream.intended_paths == ["frontend/src/App.tsx"]
 
 
 def test_resume_merge_conflict_repair_saves_completed_execution(monkeypatch):
@@ -172,8 +179,8 @@ def test_resume_merge_conflict_repair_saves_completed_execution(monkeypatch):
     )
     received_arguments = []
 
-    async def fake_resume_worker(trusted_root, run_state, decisions):
-        received_arguments.append((trusted_root, run_state, decisions))
+    async def fake_resume_worker(trusted_root, target, run_state, decisions):
+        received_arguments.append((trusted_root, target, run_state, decisions))
         return completed_execution
 
     monkeypatch.setattr(coordinator_module, "resume_worker", fake_resume_worker)
@@ -182,6 +189,7 @@ def test_resume_merge_conflict_repair_saves_completed_execution(monkeypatch):
         resume_merge_conflict_repair(
             merge_conflict_state(pending_execution),
             {},
+            sample_repository_workspace(),
         )
     )
 
@@ -189,7 +197,12 @@ def test_resume_merge_conflict_repair_saves_completed_execution(monkeypatch):
     assert result.merge_conflict is not None
     assert result.merge_conflict.repair_execution == completed_execution
     assert received_arguments == [
-        (Path("/tmp/integration"), {"saved": "repair state"}, {})
+        (
+            Path("/tmp/integration"),
+            sample_repository_workspace().target,
+            {"saved": "repair state"},
+            {},
+        )
     ]
 
 
@@ -274,23 +287,29 @@ def test_failed_tests_cannot_reach_final_approval(monkeypatch):
     monkeypatch.setattr(
         coordinator_module,
         "run_tests",
-        lambda _root: repository_checks.TestsOutcome(
+        lambda _root, _target: repository_checks.TestsOutcome(
             passed=False, output="one test failed"
         ),
     )
     monkeypatch.setattr(
         coordinator_module,
         "git_diff",
-        lambda _root: repository_checks.GitDiffOutcome(output="diff output"),
+        lambda _root, _branch: repository_checks.GitDiffOutcome(output="diff output"),
     )
 
-    async def fake_reviewer(_root, review_input):
+    async def fake_reviewer(_root, _target, review_input):
         assert review_input.test_output.startswith("Combined tests: FAILED")
         return ReviewOutput(status=ReviewStatus.SUCCESS)
 
     monkeypatch.setattr(coordinator_module, "invoke_reviewer", fake_reviewer)
 
-    result = asyncio.run(_review_integration_worktree(sample_plan(), state))
+    result = asyncio.run(
+        _review_integration_worktree(
+            sample_plan(),
+            state,
+            sample_repository_workspace(),
+        )
+    )
 
     assert result.stage == CoordinatorStages.REVIEW_FINDINGS
     assert result.review_findings is not None
@@ -308,7 +327,9 @@ def test_dispatcher_stops_at_final_approval():
         ),
     )
 
-    result = asyncio.run(advance_until_pause(sample_plan(), state))
+    result = asyncio.run(
+        advance_until_pause(sample_plan(), state, sample_repository_workspace())
+    )
 
     assert result is state
 
@@ -326,7 +347,7 @@ def test_dispatcher_advances_completed_work_to_final_approval(monkeypatch):
         transitions.append("commit")
         assert state.stage == CoordinatorStages.WORK_COMPLETED
 
-    def fake_create_integration(state):
+    def fake_create_integration(state, _workspace):
         transitions.append("create_integration")
         return state.model_copy(
             update={
@@ -339,7 +360,7 @@ def test_dispatcher_advances_completed_work_to_final_approval(monkeypatch):
         transitions.append("merge")
         return state.model_copy(update={"stage": CoordinatorStages.INTEGRATED})
 
-    async def fake_review(_plan, state):
+    async def fake_review(_plan, state, _workspace):
         transitions.append("review")
         return state.model_copy(
             update={"stage": CoordinatorStages.AWAITING_FINAL_APPROVAL}
@@ -368,8 +389,9 @@ def test_dispatcher_advances_completed_work_to_final_approval(monkeypatch):
             CoordinatorExecution(
                 stage=CoordinatorStages.WORK_COMPLETED,
                 work_records=work_records,
-            ),
-        )
+                ),
+                sample_repository_workspace(),
+            )
     )
 
     assert transitions == ["commit", "create_integration", "merge", "review"]
@@ -388,7 +410,7 @@ def test_serialized_resume_does_not_replay_completed_work(monkeypatch):
     reloaded_state = CoordinatorExecution.model_validate(saved_json)
     resumed_worktree_ids = []
 
-    async def fake_resume_worker(trusted_root, run_state, resolutions):
+    async def fake_resume_worker(trusted_root, _target, run_state, resolutions):
         resumed_worktree_ids.append(trusted_root.name)
         assert run_state == {"saved": True}
         assert resolutions["approval-1"].decision == ApprovalDecision.Approved
@@ -397,7 +419,7 @@ def test_serialized_resume_does_not_replay_completed_work(monkeypatch):
             output=WorkerOutput(work_notes="Pending work completed"),
         )
 
-    async def stop_after_resume(_plan, state):
+    async def stop_after_resume(_plan, state, _workspace):
         return state
 
     monkeypatch.setattr(coordinator_module, "resume_worker", fake_resume_worker)
@@ -412,6 +434,7 @@ def test_serialized_resume_does_not_replay_completed_work(monkeypatch):
                     decision=ApprovalDecision.Approved
                 )
             },
+            sample_repository_workspace(),
         )
     )
 
@@ -429,15 +452,21 @@ def test_approved_finalization_removes_checkouts_but_keeps_result_branch(monkeyp
     monkeypatch.setattr(
         coordinator_module,
         "remove_worktree_checkout",
-        lambda worktree, force=False: removed_checkouts.append((worktree.id, force)),
+        lambda _workspace, worktree, force=False: removed_checkouts.append(
+            (worktree.id, force)
+        ),
     )
     monkeypatch.setattr(
         coordinator_module,
         "delete_generated_branch",
-        lambda worktree: deleted_branches.append(worktree.id),
+        lambda _workspace, worktree: deleted_branches.append(worktree.id),
     )
 
-    result = finalize_coordinator(finalization_state(), approved=True)
+    result = finalize_coordinator(
+        finalization_state(),
+        approved=True,
+        workspace=sample_repository_workspace(),
+    )
 
     assert result.stage == CoordinatorStages.COMPLETED
     assert removed_checkouts == [("backend", True), ("integration", True)]
@@ -451,15 +480,21 @@ def test_rejected_finalization_removes_checkouts_and_all_branches(monkeypatch):
     monkeypatch.setattr(
         coordinator_module,
         "remove_worktree_checkout",
-        lambda worktree, force=False: removed_checkouts.append((worktree.id, force)),
+        lambda _workspace, worktree, force=False: removed_checkouts.append(
+            (worktree.id, force)
+        ),
     )
     monkeypatch.setattr(
         coordinator_module,
         "delete_generated_branch",
-        lambda worktree: deleted_branches.append(worktree.id),
+        lambda _workspace, worktree: deleted_branches.append(worktree.id),
     )
 
-    result = finalize_coordinator(finalization_state(), approved=False)
+    result = finalize_coordinator(
+        finalization_state(),
+        approved=False,
+        workspace=sample_repository_workspace(),
+    )
 
     assert result.stage == CoordinatorStages.REJECTED
     assert removed_checkouts == [("backend", True), ("integration", True)]

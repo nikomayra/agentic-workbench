@@ -4,9 +4,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.repository.operations import SAMPLE_REPOSITORY_ROOT
-
-WORKTREE_ROOT = SAMPLE_REPOSITORY_ROOT.parent / ".agent_worktrees"
+from app.repository.workspaces import RepositoryWorkspace
 
 
 @dataclass
@@ -18,14 +16,14 @@ class Worktree:
     path: Path
 
 
-def create_worktree(tree_id: str) -> Worktree:
-    """Create one isolated checkout from main for a worker."""
-    WORKTREE_ROOT.mkdir(parents=True, exist_ok=True)
+def create_worktree(workspace: RepositoryWorkspace, tree_id: str) -> Worktree:
+    """Create one isolated checkout from the configured base branch."""
+    workspace.worktree_root.mkdir(parents=True, exist_ok=True)
 
     worktree = Worktree(
         id=tree_id,
         branch=f"worker/{tree_id}",
-        path=(WORKTREE_ROOT / tree_id).resolve(),
+        path=(workspace.worktree_root / tree_id).resolve(),
     )
     result = subprocess.run(
         [
@@ -35,9 +33,9 @@ def create_worktree(tree_id: str) -> Worktree:
             "-b",
             worktree.branch,
             str(worktree.path),
-            "main",
+            workspace.target.base_branch,
         ],
-        cwd=SAMPLE_REPOSITORY_ROOT,
+        cwd=workspace.repository_root,
         capture_output=True,
         text=True,
         timeout=5,
@@ -49,12 +47,16 @@ def create_worktree(tree_id: str) -> Worktree:
     return worktree
 
 
-def remove_worktree_checkout(worktree: Worktree, force: bool = False) -> None:
+def remove_worktree_checkout(
+    workspace: RepositoryWorkspace,
+    worktree: Worktree,
+    force: bool = False,
+) -> None:
     """Remove a checkout, optionally discarding changes in disposable worktrees."""
     if force:
-        managed_root = WORKTREE_ROOT.resolve()
+        managed_root = workspace.worktree_root.resolve()
         resolved_worktree = worktree.path.resolve()
-        if not resolved_worktree.is_relative_to(managed_root):
+        if resolved_worktree.parent != managed_root:
             raise ValueError("Forced cleanup is limited to managed worktrees.")
 
         clean_result = subprocess.run(
@@ -77,7 +79,7 @@ def remove_worktree_checkout(worktree: Worktree, force: bool = False) -> None:
 
     remove_result = subprocess.run(
         command,
-        cwd=SAMPLE_REPOSITORY_ROOT,
+        cwd=workspace.repository_root,
         capture_output=True,
         text=True,
         timeout=5,
@@ -89,11 +91,14 @@ def remove_worktree_checkout(worktree: Worktree, force: bool = False) -> None:
         )
 
 
-def delete_generated_branch(worktree: Worktree) -> None:
+def delete_generated_branch(
+    workspace: RepositoryWorkspace,
+    worktree: Worktree,
+) -> None:
     """Delete a branch previously created for an application worktree."""
     branch_result = subprocess.run(
         ["git", "branch", "-D", worktree.branch],
-        cwd=SAMPLE_REPOSITORY_ROOT,
+        cwd=workspace.repository_root,
         capture_output=True,
         text=True,
         timeout=5,

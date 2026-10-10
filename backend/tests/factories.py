@@ -14,13 +14,37 @@ from app.orchestration.state import (
     WorkRecordStatus,
 )
 from app.orchestration.worktrees import Worktree
+from app.repository.workspaces import RepositoryWorkspace
 from app.schemas.schemas import (
     ApprovalRequest,
     Plan,
     PlanStep,
+    RepositoryTarget,
     Workstream,
 )
 from evals.models import EvalCase, RunObservation, TraceMetrics
+
+SAMPLE_REPOSITORY_ROOT = (
+    Path(__file__).resolve().parents[2] / "fixtures" / "sample_repo"
+).resolve()
+
+
+def sample_repository_target() -> RepositoryTarget:
+    return RepositoryTarget(
+        clone_url=str(SAMPLE_REPOSITORY_ROOT),
+        base_branch="main",
+        test_command=["uv", "run", "pytest", "-q"],
+        test_working_directory="backend",
+    )
+
+
+def sample_repository_workspace() -> RepositoryWorkspace:
+    return RepositoryWorkspace(
+        run_id=uuid.UUID(int=0),
+        repository_root=SAMPLE_REPOSITORY_ROOT,
+        worktree_root=SAMPLE_REPOSITORY_ROOT.parent / ".agent_worktrees",
+        target=sample_repository_target(),
+    )
 
 
 def sample_plan() -> Plan:

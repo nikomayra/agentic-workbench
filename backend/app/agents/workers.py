@@ -10,6 +10,7 @@ from app.schemas.schemas import (
     ApprovalDecision,
     ApprovalRequest,
     ApprovalResolution,
+    RepositoryTarget,
     Workstream,
 )
 from app.tools.agent_tools import (
@@ -51,7 +52,7 @@ class WorkExecution(BaseModel):
     approval_requests: list[ApprovalRequest] = Field(default_factory=list)
 
 
-def make_worker(trusted_root: Path) -> Agent:
+def make_worker(trusted_root: Path, target: RepositoryTarget) -> Agent:
     """Create a worker agent bound to one worktree."""
     scoped_editing_tool = ApplyPatchTool(
         editor=RepositoryEditor(trusted_root), needs_approval=True
@@ -74,17 +75,18 @@ def make_worker(trusted_root: Path) -> Agent:
             make_search_code_tool(trusted_root),
             make_read_file_tool(trusted_root),
             make_git_diff_tool(trusted_root),
-            make_run_tests_tool(trusted_root),
+            make_run_tests_tool(trusted_root, target),
         ],
     )
 
 
 async def invoke_worker(
     trusted_root: Path,
+    target: RepositoryTarget,
     worker_input: WorkerInput,
 ) -> WorkExecution:
     try:
-        agent = make_worker(trusted_root)
+        agent = make_worker(trusted_root, target)
         result = await Runner.run(
             agent,
             worker_input.model_dump_json(),
@@ -98,11 +100,12 @@ async def invoke_worker(
 
 async def resume_worker(
     trusted_root: Path,
+    target: RepositoryTarget,
     run_state: dict[str, Any],
     resolutions: dict[str, ApprovalResolution],
 ) -> WorkExecution:
     """Resume a worker after all requested tool decisions are available."""
-    agent = make_worker(trusted_root)
+    agent = make_worker(trusted_root, target)
 
     try:
         state = await RunState.from_json(agent, run_state)

@@ -34,8 +34,12 @@ from app.orchestration.worktrees import (
     delete_generated_branch,
     remove_worktree_checkout,
 )
-from app.repository.operations import SAMPLE_REPOSITORY_ROOT
-from app.schemas.schemas import ApprovalRequest, ApprovalResolution
+from app.repository.workspaces import RepositoryWorkspace
+from app.schemas.schemas import (
+    ApprovalRequest,
+    ApprovalResolution,
+    RepositoryTarget,
+)
 from evals.models import (
     EvalCase,
     EvalConfiguration,
@@ -62,6 +66,22 @@ EVAL_WORKFLOW_ERRORS = (PlannerError, ReviewerError, WorkerError, RuntimeError)
 INPUT_USD_PER_MILLION = 0.20
 CACHED_INPUT_USD_PER_MILLION = 0.02
 OUTPUT_USD_PER_MILLION = 1.20
+
+SAMPLE_REPOSITORY_ROOT = (
+    Path(__file__).resolve().parents[2] / "fixtures" / "sample_repo"
+).resolve()
+EVAL_REPOSITORY_TARGET = RepositoryTarget(
+    clone_url=str(SAMPLE_REPOSITORY_ROOT),
+    base_branch="main",
+    test_command=["uv", "run", "pytest", "-q"],
+    test_working_directory="backend",
+)
+EVAL_WORKSPACE = RepositoryWorkspace(
+    run_id=uuid.UUID(int=0),
+    repository_root=SAMPLE_REPOSITORY_ROOT,
+    worktree_root=SAMPLE_REPOSITORY_ROOT.parent / ".agent_worktrees",
+    target=EVAL_REPOSITORY_TARGET,
+)
 
 
 def _validate_cases(raw_cases: object) -> list[EvalCase]:
@@ -199,14 +219,14 @@ async def execute_single_worker_workflow(case: EvalCase) -> ExecutionFacts:
             "Implement the requested objective and keep relevant tests passing."
         ],
     )
-    worktree = create_worktree(f"eval_{case.id}_{uuid.uuid4()}")
+    worktree = create_worktree(EVAL_WORKSPACE, f"eval_{case.id}_{uuid.uuid4()}")
     try:
         await _run_worker_until_complete(
             WorkerInput(workstream=single_workstream), worktree
         )
         commit_worktree_changes(worktree, f"Evaluate {case.id}")
-        test_outcome = run_tests(worktree.path)
-        diff_output = git_diff(worktree.path)
+        test_outcome = run_tests(worktree.path, EVAL_REPOSITORY_TARGET)
+        diff_output = git_diff(worktree.path, EVAL_REPOSITORY_TARGET.base_branch)
         exc_facts = ExecutionFacts(
             tests_passed=test_outcome.passed,
             changed_paths=list(diff_output.changed_paths),
@@ -218,8 +238,8 @@ async def execute_single_worker_workflow(case: EvalCase) -> ExecutionFacts:
             error=_format_workflow_error(exc),
         )
     finally:
-        remove_worktree_checkout(worktree, force=True)
-        delete_generated_branch(worktree)
+        remove_worktree_checkout(EVAL_WORKSPACE, worktree, force=True)
+        delete_generated_branch(EVAL_WORKSPACE, worktree)
 
     return exc_facts
 
@@ -229,8 +249,15 @@ async def execute_planner_worker_workflow(case: EvalCase) -> ExecutionFacts:
 
     worktree: Worktree | None = None
     try:
-        plan = await invoke_planner(SAMPLE_REPOSITORY_ROOT, case.objective)
-        worktree = create_worktree(f"eval_{case.id}_{uuid.uuid4()}")
+        plan = await invoke_planner(
+            SAMPLE_REPOSITORY_ROOT,
+            EVAL_REPOSITORY_TARGET,
+            case.objective,
+        )
+        worktree = create_worktree(
+            EVAL_WORKSPACE,
+            f"eval_{case.id}_{uuid.uuid4()}",
+        )
         combined_plan_steps = "\n".join(
             f"{step.title}: {step.description}" for step in plan.steps
         )
@@ -248,8 +275,8 @@ async def execute_planner_worker_workflow(case: EvalCase) -> ExecutionFacts:
             WorkerInput(workstream=single_workstream), worktree
         )
         commit_worktree_changes(worktree, f"Evaluate {case.id}")
-        test_outcome = run_tests(worktree.path)
-        diff_output = git_diff(worktree.path)
+        test_outcome = run_tests(worktree.path, EVAL_REPOSITORY_TARGET)
+        diff_output = git_diff(worktree.path, EVAL_REPOSITORY_TARGET.base_branch)
         exc_facts = ExecutionFacts(
             tests_passed=test_outcome.passed,
             changed_paths=list(diff_output.changed_paths),
@@ -262,8 +289,8 @@ async def execute_planner_worker_workflow(case: EvalCase) -> ExecutionFacts:
         )
     finally:
         if worktree is not None:
-            remove_worktree_checkout(worktree, force=True)
-            delete_generated_branch(worktree)
+            remove_worktree_checkout(EVAL_WORKSPACE, worktree, force=True)
+            delete_generated_branch(EVAL_WORKSPACE, worktree)
 
     return exc_facts
 
@@ -276,8 +303,14 @@ async def execute_full_workflow(case: EvalCase) -> ExecutionFacts:
         if state.integration_worktree is None:
             raise RuntimeError("Run completed with no integration worktree.")
 
-        test_outcome = run_tests(state.integration_worktree.path)
-        diff_output = git_diff(state.integration_worktree.path)
+        test_outcome = run_tests(
+            state.integration_worktree.path,
+            EVAL_REPOSITORY_TARGET,
+        )
+        diff_output = git_diff(
+            state.integration_worktree.path,
+            EVAL_REPOSITORY_TARGET.base_branch,
+        )
         exc_facts = ExecutionFacts(
             tests_passed=test_outcome.passed,
             changed_paths=list(diff_output.changed_paths),
@@ -297,7 +330,11 @@ async def _run_worker_until_complete(
     worker_input: WorkerInput, worktree: Worktree
 ) -> WorkExecution:
     """Run a single worker to the inspection boundary."""
-    execution = await invoke_worker(worktree.path, worker_input)
+    execution = await invoke_worker(
+        worktree.path,
+        EVAL_REPOSITORY_TARGET,
+        worker_input,
+    )
 
     while execution.status != WorkExecutionStatus.COMPLETED:
         if execution.status != WorkExecutionStatus.PENDING_APPROVAL:
@@ -310,7 +347,10 @@ async def _run_worker_until_complete(
             )
         resolutions = _approve_fixture_edits(execution.approval_requests)
         execution = await resume_worker(
-            worktree.path, execution.run_state, resolutions
+            worktree.path,
+            EVAL_REPOSITORY_TARGET,
+            execution.run_state,
+            resolutions,
         )
 
     return execution
@@ -323,8 +363,12 @@ async def _run_until_final_approval(
     execution: CoordinatorExecution | None = None
 
     try:
-        plan = await invoke_planner(SAMPLE_REPOSITORY_ROOT, case.objective)
-        execution = await start_coordinator(plan)
+        plan = await invoke_planner(
+            SAMPLE_REPOSITORY_ROOT,
+            EVAL_REPOSITORY_TARGET,
+            case.objective,
+        )
+        execution = await start_coordinator(plan, EVAL_WORKSPACE)
 
         while execution.stage != CoordinatorStages.AWAITING_FINAL_APPROVAL:
             if execution.stage not in APPROVAL_PAUSE_STAGES:
@@ -333,7 +377,12 @@ async def _run_until_final_approval(
                 )
             requests = pending_approval_requests(execution)
             resolutions = _approve_fixture_edits(requests)
-            execution = await resume_coordinator(plan, execution, resolutions)
+            execution = await resume_coordinator(
+                plan,
+                execution,
+                resolutions,
+                EVAL_WORKSPACE,
+            )
 
         return execution
     except Exception:
@@ -367,14 +416,18 @@ def _approve_fixture_edits(
 
 def _clean_up_coordinator_resources(saved_state: CoordinatorExecution) -> None:
     for work_record in saved_state.work_records:
-        remove_worktree_checkout(work_record.worktree, force=True)
-        delete_generated_branch(work_record.worktree)
+        remove_worktree_checkout(EVAL_WORKSPACE, work_record.worktree, force=True)
+        delete_generated_branch(EVAL_WORKSPACE, work_record.worktree)
 
     if not saved_state.integration_worktree:
         return
 
-    remove_worktree_checkout(saved_state.integration_worktree, force=True)
-    delete_generated_branch(saved_state.integration_worktree)
+    remove_worktree_checkout(
+        EVAL_WORKSPACE,
+        saved_state.integration_worktree,
+        force=True,
+    )
+    delete_generated_branch(EVAL_WORKSPACE, saved_state.integration_worktree)
 
 
 def _load_cases(path: Path = CASES_PATH) -> object:

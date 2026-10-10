@@ -30,7 +30,7 @@ from app.orchestration.worktrees import (
     merge_worktree_changes,
     remove_worktree_checkout,
 )
-from app.repository.operations import SAMPLE_REPOSITORY_ROOT
+from app.repository.workspaces import RepositoryWorkspace
 from app.schemas.schemas import (
     ApprovalResolution,
     ExecutionPlan,
@@ -44,14 +44,17 @@ from app.schemas.schemas import (
 MAX_REVIEW_FIX_CYCLES = 1
 
 
-def prepare_work(execution_plan: ExecutionPlan) -> list[WorkRecord]:
+def prepare_work(
+    execution_plan: ExecutionPlan,
+    workspace: RepositoryWorkspace,
+) -> list[WorkRecord]:
     """Create one unexecuted work record and worktree per workstream."""
     prepared_work: list[WorkRecord] = []
 
     try:
         for workstream in execution_plan.workstreams:
             work_id = uuid.uuid4()
-            worktree = create_worktree(str(work_id))
+            worktree = create_worktree(workspace, str(work_id))
             prepared_work.append(
                 WorkRecord(
                     work_id=work_id,
@@ -63,8 +66,8 @@ def prepare_work(execution_plan: ExecutionPlan) -> list[WorkRecord]:
     except Exception:
         # If preparation fails halfway through, remove resources already created.
         for worker in reversed(prepared_work):
-            remove_worktree_checkout(worker.worktree, force=True)
-            delete_generated_branch(worker.worktree)
+            remove_worktree_checkout(workspace, worker.worktree, force=True)
+            delete_generated_branch(workspace, worker.worktree)
         raise
 
     return prepared_work
@@ -72,6 +75,7 @@ def prepare_work(execution_plan: ExecutionPlan) -> list[WorkRecord]:
 
 async def execute_new_work(
     work_records: list[WorkRecord],
+    workspace: RepositoryWorkspace,
 ) -> list[WorkRecord]:
     """Execute every newly prepared work record concurrently."""
     tasks_by_work_id: dict[uuid.UUID, asyncio.Task[WorkExecution]] = {}
@@ -83,7 +87,7 @@ async def execute_new_work(
 
             worker_input = WorkerInput(workstream=work.workstream)
             tasks_by_work_id[work.work_id] = group.create_task(
-                invoke_worker(work.worktree.path, worker_input),
+                invoke_worker(work.worktree.path, workspace.target, worker_input),
                 name=str(work.work_id),
             )
 
@@ -99,6 +103,7 @@ async def execute_new_work(
 async def resume_pending_work(
     work_records: list[WorkRecord],
     approval_resolutions: dict[str, ApprovalResolution],
+    workspace: RepositoryWorkspace,
 ) -> list[WorkRecord]:
     """Resume pending work concurrently while preserving completed work."""
     pending_work: list[tuple[WorkRecord, dict[str, Any]]] = []
@@ -121,6 +126,7 @@ async def resume_pending_work(
             tasks_by_work_id[work.work_id] = group.create_task(
                 resume_worker(
                     work.worktree.path,
+                    workspace.target,
                     run_state,
                     resolutions=approval_resolutions,
                 ),
@@ -179,20 +185,22 @@ def _state_from_work_results(work_records: list[WorkRecord]) -> CoordinatorExecu
 
 
 async def advance_until_pause(
-    plan: Plan, state: CoordinatorExecution
+    plan: Plan,
+    state: CoordinatorExecution,
+    workspace: RepositoryWorkspace,
 ) -> CoordinatorExecution:
     """Dispatcher method for transitions in coordinator state-machine"""
     while True:
         match state.stage:
             case CoordinatorStages.WORK_COMPLETED:
                 _commit_completed_work(state)
-                state = _create_integration_worktree(state)
+                state = _create_integration_worktree(state, workspace)
 
             case CoordinatorStages.INTEGRATING:
                 state = _merge_worktrees_into_integration(state)
 
             case CoordinatorStages.MERGE_CONFLICT:
-                state = await start_merge_conflict_repair(state)
+                state = await start_merge_conflict_repair(state, workspace)
 
             case CoordinatorStages.MERGE_REPAIR_COMPLETED:
                 state = _state_from_merge_repair_completed(state)
@@ -206,10 +214,10 @@ async def advance_until_pause(
                 return state
 
             case CoordinatorStages.INTEGRATED:
-                state = await _review_integration_worktree(plan, state)
+                state = await _review_integration_worktree(plan, state, workspace)
 
             case CoordinatorStages.REVIEW_FINDINGS:
-                state = await start_attempt_fix_review_findings(state)
+                state = await start_attempt_fix_review_findings(state, workspace)
 
             case CoordinatorStages.REVIEW_FIX_COMPLETED:
                 state = _state_from_review_findings_fix_completed(state)
@@ -221,12 +229,16 @@ async def advance_until_pause(
 async def _review_integration_worktree(
     plan: Plan,
     state: CoordinatorExecution,
+    workspace: RepositoryWorkspace,
 ) -> CoordinatorExecution:
     if state.stage != CoordinatorStages.INTEGRATED or not state.integration_worktree:
         raise RuntimeError("Not ready for review cycle yet.")
 
-    test_outcome = run_tests(state.integration_worktree.path)
-    actual_diff = git_diff(state.integration_worktree.path)
+    test_outcome = run_tests(state.integration_worktree.path, workspace.target)
+    actual_diff = git_diff(
+        state.integration_worktree.path,
+        workspace.target.base_branch,
+    )
     test_report = (
         f"Combined tests: {'PASSED' if test_outcome.passed else 'FAILED'}\n"
         f"{test_outcome.output}"
@@ -249,7 +261,9 @@ async def _review_integration_worktree(
     )
 
     review_output = await invoke_reviewer(
-        state.integration_worktree.path, review_input=review_input
+        state.integration_worktree.path,
+        workspace.target,
+        review_input=review_input,
     )
 
     if not test_outcome.passed and review_output.status == ReviewStatus.SUCCESS:
@@ -341,6 +355,7 @@ def _state_from_fix_review_findings_attempt(
 
 async def start_attempt_fix_review_findings(
     state: CoordinatorExecution,
+    workspace: RepositoryWorkspace,
 ) -> CoordinatorExecution:
 
     if not state.review_findings or state.stage != CoordinatorStages.REVIEW_FINDINGS:
@@ -371,6 +386,7 @@ async def start_attempt_fix_review_findings(
     )
     repair_execution = await invoke_worker(
         state.integration_worktree.path,
+        workspace.target,
         WorkerInput(workstream=repair_assignment),
     )
 
@@ -380,6 +396,7 @@ async def start_attempt_fix_review_findings(
 async def resume_attempt_fix_review_findings(
     state: CoordinatorExecution,
     decisions: dict[str, ApprovalResolution],
+    workspace: RepositoryWorkspace,
 ) -> CoordinatorExecution:
     if (
         state.stage != CoordinatorStages.REVIEW_FIX_AWAITING_APPROVALS
@@ -392,6 +409,7 @@ async def resume_attempt_fix_review_findings(
 
     repair_execution = await resume_worker(
         state.integration_worktree.path,
+        workspace.target,
         state.review_findings.fix_execution.run_state,
         decisions,
     )
@@ -399,7 +417,9 @@ async def resume_attempt_fix_review_findings(
 
 
 def finalize_coordinator(
-    saved_state: CoordinatorExecution, approved: bool
+    saved_state: CoordinatorExecution,
+    approved: bool,
+    workspace: RepositoryWorkspace,
 ) -> CoordinatorExecution:
     """Apply the final human decision and remove temporary Git resources."""
     if saved_state.stage != CoordinatorStages.AWAITING_FINAL_APPROVAL:
@@ -409,12 +429,16 @@ def finalize_coordinator(
         raise RuntimeError("Missing integration worktree; cannot finalize coordinator.")
 
     for work_record in saved_state.work_records:
-        remove_worktree_checkout(work_record.worktree, force=True)
-        delete_generated_branch(work_record.worktree)
+        remove_worktree_checkout(workspace, work_record.worktree, force=True)
+        delete_generated_branch(workspace, work_record.worktree)
 
-    remove_worktree_checkout(saved_state.integration_worktree, force=True)
+    remove_worktree_checkout(
+        workspace,
+        saved_state.integration_worktree,
+        force=True,
+    )
     if not approved:
-        delete_generated_branch(saved_state.integration_worktree)
+        delete_generated_branch(workspace, saved_state.integration_worktree)
 
     stage = CoordinatorStages.COMPLETED if approved else CoordinatorStages.REJECTED
     return saved_state.model_copy(update={"stage": stage})
@@ -424,49 +448,69 @@ async def resume_coordinator(
     plan: Plan,
     saved_state: CoordinatorExecution,
     decisions: dict[str, ApprovalResolution],
+    workspace: RepositoryWorkspace,
 ) -> CoordinatorExecution:
     """Resume paused coordinator execution"""
     updated_state = None
     if saved_state.stage == CoordinatorStages.AWAITING_APPROVALS:
-        updated_state = await resume_work(saved_state, decisions=decisions)
+        updated_state = await resume_work(
+            saved_state,
+            decisions=decisions,
+            workspace=workspace,
+        )
     elif saved_state.stage == CoordinatorStages.MERGE_REPAIR_AWAITING_APPROVALS:
         updated_state = await resume_merge_conflict_repair(
-            saved_state, decisions=decisions
+            saved_state,
+            decisions=decisions,
+            workspace=workspace,
         )
     elif saved_state.stage == CoordinatorStages.REVIEW_FIX_AWAITING_APPROVALS:
         updated_state = await resume_attempt_fix_review_findings(
-            saved_state, decisions=decisions
+            saved_state,
+            decisions=decisions,
+            workspace=workspace,
         )
 
     if updated_state:
-        return await advance_until_pause(plan, updated_state)
+        return await advance_until_pause(plan, updated_state, workspace)
     else:
         raise RuntimeError("Failed to resume coordinator")
 
 
-async def start_coordinator(plan: Plan) -> CoordinatorExecution:
+async def start_coordinator(
+    plan: Plan,
+    workspace: RepositoryWorkspace,
+) -> CoordinatorExecution:
     """Start coordinator execution for an approved plan."""
-    execution_plan = await invoke_decomposer(SAMPLE_REPOSITORY_ROOT, plan)
-    initial_state = await _start_work(execution_plan)
-    return await advance_until_pause(plan, initial_state)
+    execution_plan = await invoke_decomposer(
+        workspace.repository_root,
+        workspace.target,
+        plan,
+    )
+    initial_state = await _start_work(execution_plan, workspace)
+    return await advance_until_pause(plan, initial_state, workspace)
 
 
-async def _start_work(execution_plan: ExecutionPlan) -> CoordinatorExecution:
-    prepared_work = prepare_work(execution_plan)
+async def _start_work(
+    execution_plan: ExecutionPlan,
+    workspace: RepositoryWorkspace,
+) -> CoordinatorExecution:
+    prepared_work = prepare_work(execution_plan, workspace)
 
     try:
-        executed_work = await execute_new_work(prepared_work)
+        executed_work = await execute_new_work(prepared_work, workspace)
         return _state_from_work_results(executed_work)
     except Exception as exc:
         for work in reversed(prepared_work):
-            remove_worktree_checkout(work.worktree, force=True)
-            delete_generated_branch(work.worktree)
+            remove_worktree_checkout(workspace, work.worktree, force=True)
+            delete_generated_branch(workspace, work.worktree)
         raise RuntimeError("Failed to start work") from exc
 
 
 async def resume_work(
     saved_state: CoordinatorExecution,
     decisions: dict[str, ApprovalResolution],
+    workspace: RepositoryWorkspace,
 ) -> CoordinatorExecution:
     """Resume a coordinator paused for worker tool approvals."""
     validated_state = _state_from_work_results(saved_state.work_records)
@@ -475,7 +519,11 @@ async def resume_work(
     if validated_state.stage != CoordinatorStages.AWAITING_APPROVALS:
         raise RuntimeError("Only work awaiting approvals can be resumed.")
 
-    updated_work = await resume_pending_work(validated_state.work_records, decisions)
+    updated_work = await resume_pending_work(
+        validated_state.work_records,
+        decisions,
+        workspace,
+    )
     return _state_from_work_results(updated_work)
 
 
@@ -495,7 +543,10 @@ def _commit_completed_work(state: CoordinatorExecution) -> None:
         #     raise RuntimeError("Completed work failed to commit.")
 
 
-def _create_integration_worktree(state: CoordinatorExecution) -> CoordinatorExecution:
+def _create_integration_worktree(
+    state: CoordinatorExecution,
+    workspace: RepositoryWorkspace,
+) -> CoordinatorExecution:
 
     if state.stage != CoordinatorStages.WORK_COMPLETED:
         raise RuntimeError(
@@ -503,7 +554,10 @@ def _create_integration_worktree(state: CoordinatorExecution) -> CoordinatorExec
         )
 
     integration_id = uuid.uuid4()
-    integration_worktree = create_worktree(f"integration_{integration_id}")
+    integration_worktree = create_worktree(
+        workspace,
+        f"integration_{integration_id}",
+    )
 
     updated_state = CoordinatorExecution(
         stage=CoordinatorStages.INTEGRATING,
@@ -620,6 +674,7 @@ def _state_from_merge_repair_result(
 
 async def start_merge_conflict_repair(
     state: CoordinatorExecution,
+    workspace: RepositoryWorkspace,
 ) -> CoordinatorExecution:
     """Start an agent repair for the active conflict in the integration tree."""
 
@@ -663,6 +718,7 @@ async def start_merge_conflict_repair(
     )
     repair_execution = await invoke_worker(
         state.integration_worktree.path,
+        workspace.target,
         WorkerInput(workstream=repair_assignment),
     )
     return _state_from_merge_repair_result(state, repair_execution)
@@ -671,6 +727,7 @@ async def start_merge_conflict_repair(
 async def resume_merge_conflict_repair(
     state: CoordinatorExecution,
     decisions: dict[str, ApprovalResolution],
+    workspace: RepositoryWorkspace,
 ) -> CoordinatorExecution:
     """Resume an interrupted merge-repair agent after approval decisions."""
     if (
@@ -684,6 +741,7 @@ async def resume_merge_conflict_repair(
 
     repair_execution = await resume_worker(
         state.integration_worktree.path,
+        workspace.target,
         state.merge_conflict.repair_execution.run_state,
         decisions,
     )

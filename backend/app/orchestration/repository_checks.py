@@ -2,6 +2,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.repository.operations import validate_repository_root
+from app.schemas.schemas import RepositoryTarget
+
 
 @dataclass(frozen=True)
 class TestsOutcome:
@@ -9,17 +12,16 @@ class TestsOutcome:
     output: str
 
 
-def run_tests(trusted_root: Path) -> TestsOutcome:
-    """Run the integration worktree's bounded backend test command."""
-    backend_root = trusted_root / "backend"
-    if not backend_root.is_dir():
-        raise RuntimeError(
-            "Unexpected folder structure: no backend folder found. Testing failed."
-        )
+def run_tests(trusted_root: Path, target: RepositoryTarget) -> TestsOutcome:
+    """Run the configured tests in an integration worktree."""
+    root = validate_repository_root(trusted_root)
+    test_root = (root / target.test_working_directory).resolve()
+    if not test_root.is_relative_to(root) or not test_root.is_dir():
+        raise RuntimeError("Test working directory is outside the repository.")
 
     result = subprocess.run(
-        ["uv", "run", "pytest", "-q"],
-        cwd=backend_root,
+        target.test_command,
+        cwd=test_root,
         capture_output=True,
         text=True,
         timeout=30,
@@ -39,11 +41,13 @@ class GitDiffOutcome:
     changed_paths: tuple[Path, ...] = ()
 
 
-def git_diff(trusted_root: Path) -> GitDiffOutcome:
-    """Return the integration branch's changes relative to main."""
+def git_diff(trusted_root: Path, base_branch: str) -> GitDiffOutcome:
+    """Return integration-branch changes relative to its configured base."""
+    root = validate_repository_root(trusted_root)
+    comparison = f"{base_branch}...HEAD"
     result = subprocess.run(
-        ["git", "diff", "main...HEAD", "--", "."],
-        cwd=trusted_root,
+        ["git", "diff", comparison, "--", "."],
+        cwd=root,
         capture_output=True,
         text=True,
         timeout=5,
@@ -51,8 +55,8 @@ def git_diff(trusted_root: Path) -> GitDiffOutcome:
     )
 
     paths = subprocess.run(
-        ["git", "diff", "main...HEAD", "--name-only", "--", "."],
-        cwd=trusted_root,
+        ["git", "diff", comparison, "--name-only", "--", "."],
+        cwd=root,
         capture_output=True,
         text=True,
         timeout=5,

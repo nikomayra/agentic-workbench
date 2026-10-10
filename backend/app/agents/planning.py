@@ -7,6 +7,7 @@ from app.mcp.repository_connection import make_repository_connection
 from app.schemas.schemas import (
     ExecutionPlan,
     Plan,
+    RepositoryTarget,
     Workstream,
 )
 
@@ -30,9 +31,13 @@ def make_planner(mcp_server: MCPServerStdio) -> Agent:
     return planner_agent
 
 
-async def invoke_planner(trusted_root: Path, objective: str) -> Plan:
+async def invoke_planner(
+    trusted_root: Path,
+    target: RepositoryTarget,
+    objective: str,
+) -> Plan:
     try:
-        async with make_repository_connection(trusted_root) as mcp_server:
+        async with make_repository_connection(trusted_root, target) as mcp_server:
             result = await Runner.run(
                 make_planner(mcp_server),
                 objective,
@@ -60,10 +65,14 @@ def make_decomposer(mcp_server: MCPServerStdio) -> Agent:
     return decomposer_agent
 
 
-async def invoke_decomposer(trusted_root: Path, plan: Plan) -> ExecutionPlan:
+async def invoke_decomposer(
+    trusted_root: Path,
+    target: RepositoryTarget,
+    plan: Plan,
+) -> ExecutionPlan:
     """Convert an approved plan into a validated execution plan."""
     try:
-        async with make_repository_connection(trusted_root) as mcp_server:
+        async with make_repository_connection(trusted_root, target) as mcp_server:
             result = await Runner.run(
                 make_decomposer(mcp_server),
                 plan.model_dump_json(),

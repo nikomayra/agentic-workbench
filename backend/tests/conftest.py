@@ -1,7 +1,7 @@
 import pytest
 from agents import set_tracing_disabled
 
-from app.repository.operations import SAMPLE_REPOSITORY_ROOT
+from tests.factories import SAMPLE_REPOSITORY_ROOT
 
 set_tracing_disabled(True)
 

@@ -1,17 +1,20 @@
 import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
 
 import app.orchestration.worktrees as worktrees_module
 from app.orchestration.worktrees import (
-    WORKTREE_ROOT,
     Worktree,
     complete_merge_after_conflict,
+    create_worktree,
     merge_worktree_changes,
     remove_worktree_checkout,
 )
-from tests.factories import worktree
+from app.repository.workspaces import RepositoryWorkspace
+from app.schemas.schemas import RepositoryTarget
+from tests.factories import sample_repository_workspace, worktree
 
 
 def _command_result(
@@ -26,6 +29,46 @@ def _command_result(
         stdout=stdout,
         stderr=stderr,
     )
+
+
+def test_create_worktree_uses_workspace_root_and_base_branch(monkeypatch, tmp_path):
+    repository_root = tmp_path / "repository"
+    repository_root.mkdir()
+    workspace = RepositoryWorkspace(
+        run_id=uuid.uuid4(),
+        repository_root=repository_root,
+        worktree_root=tmp_path / "worktrees",
+        target=RepositoryTarget(
+            clone_url="https://example.com/repository.git",
+            base_branch="develop",
+            test_command=["pytest"],
+        ),
+    )
+    calls: list[tuple[list[str], Path]] = []
+
+    def fake_run(command, *, cwd, **_kwargs):
+        calls.append((command, cwd))
+        return _command_result(returncode=0)
+
+    monkeypatch.setattr(worktrees_module.subprocess, "run", fake_run)
+
+    result = create_worktree(workspace, "backend-change")
+
+    assert result.path == workspace.worktree_root / "backend-change"
+    assert calls == [
+        (
+            [
+                "git",
+                "worktree",
+                "add",
+                "-b",
+                "worker/backend-change",
+                str(result.path),
+                "develop",
+            ],
+            repository_root,
+        )
+    ]
 
 
 def test_merge_worktree_changes_returns_success(monkeypatch):
@@ -55,10 +98,14 @@ def test_force_remove_cleans_managed_worktree_before_removal(monkeypatch):
     managed_worktree = Worktree(
         id="test",
         branch="worker/test",
-        path=WORKTREE_ROOT / "test",
+        path=sample_repository_workspace().worktree_root / "test",
     )
 
-    remove_worktree_checkout(managed_worktree, force=True)
+    remove_worktree_checkout(
+        sample_repository_workspace(),
+        managed_worktree,
+        force=True,
+    )
 
     assert commands == [
         ["git", "clean", "-ffdx"],

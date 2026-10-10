@@ -3,12 +3,15 @@ import asyncio
 from mcp.types import TextContent, TextResourceContents
 
 from app.mcp.repository_connection import make_repository_connection
-from app.repository.operations import SAMPLE_REPOSITORY_ROOT
+from tests.factories import SAMPLE_REPOSITORY_ROOT, sample_repository_target
 
 
 def test_repository_server_exposes_and_serves_expected_capabilities():
     async def exercise_server():
-        async with make_repository_connection(SAMPLE_REPOSITORY_ROOT) as server:
+        async with make_repository_connection(
+            SAMPLE_REPOSITORY_ROOT,
+            sample_repository_target(),
+        ) as server:
             tool_names = {tool.name for tool in await server.list_tools()}
             assert {"list_files", "read_file", "search_repo"} <= tool_names
 
@@ -37,7 +40,10 @@ def test_repository_server_exposes_and_serves_expected_capabilities():
 
 def test_repository_server_rejects_a_path_outside_its_root():
     async def attempt_escape():
-        async with make_repository_connection(SAMPLE_REPOSITORY_ROOT) as server:
+        async with make_repository_connection(
+            SAMPLE_REPOSITORY_ROOT,
+            sample_repository_target(),
+        ) as server:
             result = await server.call_tool(
                 "read_file", {"relative_path": "../../.env"}
             )

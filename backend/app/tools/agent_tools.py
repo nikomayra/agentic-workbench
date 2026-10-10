@@ -11,6 +11,7 @@ from app.repository.operations import (
     validate_repository_root,
     workspace_info,
 )
+from app.schemas.schemas import RepositoryTarget
 
 
 def make_list_files_tool(trusted_root: Path) -> FunctionTool:
@@ -73,13 +74,20 @@ def make_git_diff_tool(trusted_root: Path) -> FunctionTool:
     return scoped_git_diff
 
 
-def make_run_tests_tool(trusted_root: Path) -> FunctionTool:
+def make_run_tests_tool(
+    trusted_root: Path,
+    target: RepositoryTarget,
+) -> FunctionTool:
     """Create a run-tests tool bound to one application-chosen root."""
     root = validate_repository_root(trusted_root)
 
     @function_tool(name_override="run_tests")
     def scoped_run_tests() -> str:
         """Run the bounded backend test command and return its exit code and output."""
-        return run_tests(root)
+        return run_tests(
+            root,
+            target.test_command,
+            target.test_working_directory,
+        )
 
     return scoped_run_tests

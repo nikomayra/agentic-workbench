@@ -3,13 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from app.repository.operations import SAMPLE_REPOSITORY_ROOT
 from app.repository.workspaces import (
     RepositoryWorkspace,
     prepare_workspace,
     remove_workspace,
 )
 from app.schemas.schemas import RepositoryTarget
+from tests.factories import SAMPLE_REPOSITORY_ROOT
 
 
 def _sample_target() -> RepositoryTarget:

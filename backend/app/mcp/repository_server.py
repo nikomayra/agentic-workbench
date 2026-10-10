@@ -4,9 +4,21 @@ from pathlib import Path
 from mcp.server import MCPServer
 
 from app.repository import operations as repository
+from app.schemas.schemas import RepositoryTarget
+
+
+def _required_environment_value(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is required to start the repository server.")
+    return value
+
 
 TRUSTED_ROOT = repository.validate_repository_root(
-    Path(os.environ.get("REPOSITORY_ROOT", str(repository.SAMPLE_REPOSITORY_ROOT)))
+    Path(_required_environment_value("REPOSITORY_ROOT"))
+)
+REPOSITORY_TARGET = RepositoryTarget.model_validate_json(
+    _required_environment_value("REPOSITORY_TARGET")
 )
 
 mcp = MCPServer(name="Repository Server")
@@ -61,8 +73,12 @@ def git_status() -> str:
 
 @mcp.tool()
 def run_tests() -> str:
-    """Run the repository backend pytest suite. Provides its exit code and bounded test output."""
-    return repository.run_tests(TRUSTED_ROOT)
+    """Run the configured repository test command and return bounded output."""
+    return repository.run_tests(
+        TRUSTED_ROOT,
+        REPOSITORY_TARGET.test_command,
+        REPOSITORY_TARGET.test_working_directory,
+    )
 
 
 if __name__ == "__main__":

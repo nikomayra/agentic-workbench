@@ -4,11 +4,15 @@ from pathlib import Path
 from agents.mcp import MCPServerStdio
 
 from app.repository.operations import validate_repository_root
+from app.schemas.schemas import RepositoryTarget
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
-def make_repository_connection(trusted_root: Path) -> MCPServerStdio:
+def make_repository_connection(
+    trusted_root: Path,
+    target: RepositoryTarget,
+) -> MCPServerStdio:
     root = validate_repository_root(trusted_root)
 
     return MCPServerStdio(
@@ -17,6 +21,9 @@ def make_repository_connection(trusted_root: Path) -> MCPServerStdio:
             "command": sys.executable,
             "args": ["-m", "app.mcp.repository_server"],
             "cwd": str(BACKEND_ROOT),
-            "env": {"REPOSITORY_ROOT": str(root)},
+            "env": {
+                "REPOSITORY_ROOT": str(root),
+                "REPOSITORY_TARGET": target.model_dump_json(),
+            },
         },
     )

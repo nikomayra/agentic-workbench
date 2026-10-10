@@ -6,6 +6,7 @@ from mcp.types import TextContent
 
 from app.mcp.repository_connection import make_repository_connection
 from app.schemas.schemas import (
+    RepositoryTarget,
     ReviewInput,
     ReviewOutput,
 )
@@ -27,10 +28,12 @@ def make_reviewer(mcp_server: MCPServerStdio, instructions: str) -> Agent:
 
 
 async def invoke_reviewer(
-    trusted_root: Path, review_input: ReviewInput
+    trusted_root: Path,
+    target: RepositoryTarget,
+    review_input: ReviewInput,
 ) -> ReviewOutput:
     try:
-        async with make_repository_connection(trusted_root) as mcp_server:
+        async with make_repository_connection(trusted_root, target) as mcp_server:
             instructions = await _review_instructions(mcp_server)
             result = await Runner.run(
                 make_reviewer(mcp_server, instructions),

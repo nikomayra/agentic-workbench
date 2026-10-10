@@ -14,22 +14,6 @@ IGNORED_NAMES = {
 MAX_FILE_BYTES = 20_000
 
 
-def _find_sample_repository_root() -> Path:
-    current_path = Path(__file__).resolve().parent
-
-    for directory in [current_path] + list(current_path.parents):
-        target_path = directory / "fixtures" / "sample_repo"
-        if target_path.is_dir():
-            return target_path.resolve()
-
-    raise FileNotFoundError(
-        "fixtures/sample_repo dir could not be found in parents of this file"
-    )
-
-
-SAMPLE_REPOSITORY_ROOT = _find_sample_repository_root()
-
-
 def validate_repository_root(trusted_root: Path) -> Path:
     root = trusted_root.resolve()
     if not root.is_dir():
@@ -169,16 +153,22 @@ def git_diff(trusted_root: Path) -> str:
     return result.stdout if result.stdout else "No changes."
 
 
-def run_tests(trusted_root: Path) -> str:
-    """Run the sample repository's bounded backend test command."""
+def run_tests(
+    trusted_root: Path,
+    test_command: list[str],
+    test_working_directory: str,
+) -> str:
+    """Run a configured test command inside the permitted repository."""
     root = validate_repository_root(trusted_root)
-    backend_root = root / "backend"
-    if not backend_root.is_dir():
-        raise RuntimeError("Repository does not contain a backend test directory.")
+    test_root = (root / test_working_directory).resolve()
+    if not test_root.is_relative_to(root) or not test_root.is_dir():
+        raise RuntimeError("Test working directory is outside the repository.")
+    if not test_command:
+        raise RuntimeError("Test command cannot be empty.")
 
     result = subprocess.run(
-        ["uv", "run", "pytest", "-q"],
-        cwd=backend_root,
+        test_command,
+        cwd=test_root,
         capture_output=True,
         text=True,
         timeout=30,
@@ -186,4 +176,4 @@ def run_tests(trusted_root: Path) -> str:
     )
 
     output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
-    return f"pytest exit code: {result.returncode}\n{output}"[:20_000]
+    return f"test exit code: {result.returncode}\n{output}"[:20_000]

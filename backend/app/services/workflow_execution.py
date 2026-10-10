@@ -24,10 +24,14 @@ from app.orchestration.state import (
     CoordinatorStages,
     pending_approval_requests,
 )
-from app.repository.operations import SAMPLE_REPOSITORY_ROOT
+from app.repository.workspaces import (
+    RepositoryWorkspace,
+    load_workspace,
+)
 from app.schemas.schemas import (
     ApprovalResolution,
     Plan,
+    RepositoryTarget,
 )
 
 WORKFLOW_TIMEOUT_SECONDS = 120
@@ -56,6 +60,16 @@ def _saved_coordinator_execution(workflow_run: WorkflowRun) -> CoordinatorExecut
     if workflow_run.agent_state is None:
         raise WorkflowExecutionError("Workflow has no saved coordinator execution.")
     return CoordinatorExecution.model_validate(workflow_run.agent_state)
+
+
+def _repository_target(workflow_run: WorkflowRun) -> RepositoryTarget:
+    """Validate durable repository configuration at the service boundary."""
+    return RepositoryTarget.model_validate(workflow_run.repository_target)
+
+
+def _repository_workspace(workflow_run: WorkflowRun) -> RepositoryWorkspace:
+    """Resolve one run's durable target into application-managed paths."""
+    return load_workspace(workflow_run.id, _repository_target(workflow_run))
 
 
 async def _fail_workflow(
@@ -135,6 +149,7 @@ async def _save_coordinator_execution(
 
 async def _continue_workflow(
     workflow_run: WorkflowRun,
+    workspace: RepositoryWorkspace,
     db: AsyncSession,
 ) -> None:
     try:
@@ -144,10 +159,13 @@ async def _continue_workflow(
                 saved_state = _saved_coordinator_execution(workflow_run)
                 resolutions = await _saved_approval_resolutions(workflow_run, db)
                 execution = await resume_coordinator(
-                    saved_plan, saved_state, resolutions
+                    saved_plan,
+                    saved_state,
+                    resolutions,
+                    workspace,
                 )
             else:
-                execution = await start_coordinator(saved_plan)
+                execution = await start_coordinator(saved_plan, workspace)
             await _save_coordinator_execution(workflow_run, execution, db)
     except TimeoutError as exc:
         await _fail_workflow(
@@ -261,11 +279,16 @@ async def _saved_approval_resolutions(
     }
 
 
-async def _save_workflow_plan(workflow_run: WorkflowRun, db: AsyncSession) -> None:
+async def _save_workflow_plan(
+    workflow_run: WorkflowRun,
+    workspace: RepositoryWorkspace,
+    db: AsyncSession,
+) -> None:
     try:
         async with asyncio.timeout(WORKFLOW_TIMEOUT_SECONDS):
             plan = await invoke_planner(
-                SAMPLE_REPOSITORY_ROOT,
+                workspace.repository_root,
+                workspace.target,
                 workflow_run.objective,
             )
     except TimeoutError as exc:
@@ -320,9 +343,11 @@ async def finalize_workflow(
 ) -> WorkflowRun:
     """Apply the final human decision and persist the terminal state."""
     try:
+        workspace = _repository_workspace(workflow_run)
         execution = finalize_coordinator(
             _saved_coordinator_execution(workflow_run),
             approved=approved,
+            workspace=workspace,
         )
         await _save_coordinator_execution(workflow_run, execution, db)
     except Exception as exc:  # noqa: BLE001
@@ -339,9 +364,14 @@ async def advance_workflow(run_id: uuid.UUID) -> bool:
         if workflow_run is None:
             return False
 
+        try:
+            workspace = _repository_workspace(workflow_run)
+        except Exception as exc:  # noqa: BLE001
+            await _fail_workflow(workflow_run, db, exc)
+
         if workflow_run.plan is None:
-            await _save_workflow_plan(workflow_run, db)
+            await _save_workflow_plan(workflow_run, workspace, db)
             return True
 
-        await _continue_workflow(workflow_run, db)
+        await _continue_workflow(workflow_run, workspace, db)
         return True

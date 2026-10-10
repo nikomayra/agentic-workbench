@@ -170,11 +170,11 @@ def test_run_worker_until_complete_uses_generated_worktree_root(monkeypatch):
     completed = WorkExecution(status=WorkExecutionStatus.COMPLETED)
     received_roots = []
 
-    async def fake_invoke_worker(trusted_root, _worker_input):
+    async def fake_invoke_worker(trusted_root, _target, _worker_input):
         received_roots.append(trusted_root)
         return pending
 
-    async def fake_resume_worker(trusted_root, _run_state, _resolutions):
+    async def fake_resume_worker(trusted_root, _target, _run_state, _resolutions):
         received_roots.append(trusted_root)
         return completed
 
