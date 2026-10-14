@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import logging
 import uuid
 from typing import NoReturn
 
@@ -7,6 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.planning import PlannerError, invoke_planner
+from app.config import settings
 from app.db import get_async_db_ctx
 from app.models.models import (
     Approval,
@@ -27,14 +29,17 @@ from app.orchestration.state import (
 from app.repository.workspaces import (
     RepositoryWorkspace,
     load_workspace,
+    remove_workspace,
 )
 from app.schemas.schemas import (
     ApprovalResolution,
     Plan,
     RepositoryTarget,
 )
+from app.services.github import publish_draft_pull_request
 
 WORKFLOW_TIMEOUT_SECONDS = 120
+logger = logging.getLogger(__name__)
 
 
 class WorkflowExecutionError(Exception):
@@ -342,6 +347,7 @@ async def finalize_workflow(
     db: AsyncSession,
 ) -> WorkflowRun:
     """Apply the final human decision and persist the terminal state."""
+    remove_managed_workspace = not approved
     try:
         workspace = _repository_workspace(workflow_run)
         execution = finalize_coordinator(
@@ -349,9 +355,31 @@ async def finalize_workflow(
             approved=approved,
             workspace=workspace,
         )
+
+        if approved and workflow_run.issue_url is not None:
+            if execution.integration_worktree is None:
+                raise WorkflowExecutionError(
+                    "Approved GitHub workflow has no integration branch."
+                )
+            workflow_run.pull_request_url = await asyncio.to_thread(
+                publish_draft_pull_request,
+                workspace,
+                execution.integration_worktree.branch,
+                workflow_run.issue_url,
+                workflow_run.objective,
+                settings.github_token,
+            )
+            remove_managed_workspace = True
+
         await _save_coordinator_execution(workflow_run, execution, db)
     except Exception as exc:  # noqa: BLE001
         await _fail_workflow(workflow_run, db, exc)
+
+    if remove_managed_workspace:
+        try:
+            remove_workspace(workspace)
+        except Exception:
+            logger.exception("Failed to remove terminal workflow workspace")
 
     return workflow_run
 

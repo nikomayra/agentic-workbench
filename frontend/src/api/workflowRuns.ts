@@ -4,6 +4,7 @@ import {
   type ApprovalRejectRequest,
   type Approval,
   type WorkflowCreate,
+  type GitHubWorkflowCreate,
   type Workflow,
   type FinalApprovalRequest,
 } from "@/types/types";
@@ -45,6 +46,28 @@ export const subscribeToWorkflowRun = (
   };
 
   return source;
+};
+
+export const createGitHubWorkflowRun = async (
+  payload: GitHubWorkflowCreate,
+): Promise<Workflow> => {
+  const response = await fetch(`${BASE_URL}/runs/github`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    const detail =
+      typeof body === "object" && body !== null && "detail" in body
+        ? String(body.detail)
+        : "Failed to load GitHub issue";
+    throw new Error(detail);
+  }
+
+  const data: unknown = await response.json();
+  return WorkflowResponseSchema.parse(data);
 };
 
 export const createWorkflowRun = async (

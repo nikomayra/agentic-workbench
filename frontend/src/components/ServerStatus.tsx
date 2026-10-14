@@ -22,16 +22,18 @@ const ServerStatus = () => {
   }, []);
 
   return (
-    <>
-      {error && <p role="alert">Could not reach backend: {error}</p>}
-      {!error && !health && <p>Checking backend health...</p>}
+    <div className="flex items-center gap-2 text-sm text-copy-muted">
+      <span
+        className={`size-2 rounded-full ${error ? "bg-rose-400" : health ? "bg-emerald-400" : "animate-pulse bg-amber-400"}`}
+      />
+      {error && <p role="alert">Backend unavailable: {error}</p>}
+      {!error && !health && <p>Checking services…</p>}
       {health && (
-        <ul>
-          <li>API status: {health.status}</li>
-          <li>Database: {health.database}</li>
-        </ul>
+        <p>
+          API {health.status} · Database {health.database}
+        </p>
       )}
-    </>
+    </div>
   );
 };
 

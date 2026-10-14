@@ -535,13 +535,13 @@ Build:
 
 Finish the project as a credible, reusable engineering demo—not a startup product.
 
-### 1. Replace the fixture-only production path
+### (COMPLETED) 1. Replace the fixture-only production path
 
 Keep `fixtures/sample_repo/` for tests and evals, but remove `SAMPLE_REPOSITORY_ROOT` from normal workflow execution. Introduce an application-owned repository target/workspace boundary containing at least the source URL or approved local development path, base branch, and allowlisted test command. Clone or copy each run into a managed workspace and pass that workspace explicitly through planning, workers, MCP, tests, and cleanup.
 
 This makes the workflow usable against different repositories without letting the model choose arbitrary filesystem roots or shell commands.
 
-### 2. Add one GitHub flow
+### (COMPLETED) 2. Add one GitHub flow
 
 ```text
 GitHub issue URL

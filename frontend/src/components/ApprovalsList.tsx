@@ -24,60 +24,70 @@ const ApprovalsList = ({
   };
 
   return (
-    <>
+    <section className="flex min-w-0 w-full flex-col gap-3 rounded-xl border border-line bg-panel p-4 shadow-2xl shadow-black/10 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+      <div>
+        <h2 className="font-semibold tracking-tight">Tool approvals</h2>
+        <p className="mt-1 text-sm text-copy-muted">
+          Review guarded repository edits before execution continues.
+        </p>
+      </div>
+      {(!approvals || approvals.length === 0) && (
+        <p className="rounded-lg border border-dashed border-line p-4 text-sm text-copy-muted">
+          No approval requests for this workflow.
+        </p>
+      )}
       {approvals && approvals.length > 0 && (
-        <section className="flex min-w-0 w-full flex-col gap-3 rounded-2xl border-2 p-2 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
-          <p className="text-2xl">Approvals:</p>
+        <div className="flex flex-col gap-3">
           {approvals.map((approval) => (
-            <article key={approval.id} className="min-w-0 border-b-2 pb-3">
-              <p>ID: {approval.id}</p>
-              <p>Call_ID: {approval.call_id}</p>
-              <p>Tool_Name: {approval.tool_name}</p>
-              <p>Summary: {approval.summary}</p>
-              <p>Decision: {approval.decision}</p>
-              <p>Rejection_Message: {approval.rejection_message}</p>
-              <p>
-                Created_at: {new Date(approval.created_at).toLocaleString()}
-              </p>
-              <p>
-                Decided_at:{" "}
-                {approval.decided_at &&
-                  new Date(approval.decided_at).toLocaleString()}
-              </p>
-              <p>Details: </p>
-              {Object.entries(approval.details).map(([key, value]) => (
-                <p key={key} className="wrap-break-word whitespace-pre-wrap">
-                  {key}: {String(value)}
-                </p>
-              ))}
+            <article
+              key={approval.id}
+              className="min-w-0 rounded-lg border border-line bg-panel-muted p-4 text-sm"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium">{approval.tool_name}</p>
+                <span className="rounded-full border border-line px-2 py-0.5 text-[11px] capitalize text-copy-muted">
+                  {approval.decision}
+                </span>
+              </div>
+              <p className="mt-2 text-copy-muted">{approval.summary}</p>
+              <div className="mt-3 border-t border-line pt-3 font-mono text-xs text-copy-muted">
+                {Object.entries(approval.details).map(([key, value]) => (
+                  <p key={key} className="wrap-break-word whitespace-pre-wrap">
+                    {key}: {String(value)}
+                  </p>
+                ))}
+              </div>
               {approval.decision === "pending" && (
                 <div className="flex flex-col gap-2">
-                  <button
-                    onClick={() => approve(approval.id)}
-                    className="bg-emerald-800 rounded-lg p-1 hover:bg-emerald-600"
-                    disabled={isDeciding}
-                  >
-                    {isDeciding ? "Approving..." : "Approve"}
-                  </button>
-                  <button
-                    onClick={() => reject(approval.id, rejectMsg)}
-                    className="bg-rose-800 rounded-lg p-1 hover:bg-rose-600"
-                    disabled={isDeciding}
-                  >
-                    {isDeciding ? "Rejecting..." : "Reject"}
-                  </button>
                   <textarea
                     onChange={handleChange}
                     value={rejectMsg}
-                    placeholder="Add optional rejection message..."
-                  ></textarea>
+                    placeholder="Optional rejection guidance"
+                    className="min-h-20 rounded-md border border-line bg-canvas p-2 text-sm outline-none focus:border-zinc-500"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => approve(approval.id)}
+                      className="flex-1 rounded-md bg-copy px-3 py-2 text-sm font-semibold text-canvas hover:bg-zinc-200"
+                      disabled={isDeciding}
+                    >
+                      {isDeciding ? "Approving..." : "Approve"}
+                    </button>
+                    <button
+                      onClick={() => reject(approval.id, rejectMsg)}
+                      className="flex-1 rounded-md border border-rose-800 px-3 py-2 text-sm font-medium text-rose-200 hover:bg-rose-950"
+                      disabled={isDeciding}
+                    >
+                      {isDeciding ? "Rejecting..." : "Reject"}
+                    </button>
+                  </div>
                 </div>
               )}
             </article>
           ))}
-        </section>
+        </div>
       )}
-    </>
+    </section>
   );
 };
 

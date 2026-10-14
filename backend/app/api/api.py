@@ -1,14 +1,14 @@
 import asyncio
 import datetime
-import json
 import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy import inspect, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import get_async_db_ctx, get_async_db_session
 from app.models.models import (
     Approval,
@@ -20,9 +20,12 @@ from app.schemas.schemas import (
     ApprovalRejectRequest,
     ApprovalResponse,
     FinalApprovalRequest,
+    GitHubWorkflowRunCreate,
+    RepositoryTarget,
     WorkflowRunCreate,
     WorkflowRunResponse,
 )
+from app.services.github import GitHubIntegrationError, load_issue_context
 from app.services.workflow_execution import (
     WorkflowExecutionError,
     WorkflowNotFoundError,
@@ -32,6 +35,42 @@ from app.services.workflow_execution import (
 from app.tasks.workflow_tasks import enqueue_workflow
 
 router = APIRouter()
+
+
+@router.post("/runs/github")
+async def create_github_run(
+    payload: GitHubWorkflowRunCreate,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db_session),
+) -> WorkflowRunResponse:
+    """Create a workflow whose objective and repository come from one issue."""
+    try:
+        issue = await asyncio.to_thread(
+            load_issue_context,
+            payload.issue_url,
+            settings.github_token,
+        )
+    except GitHubIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    target = RepositoryTarget(
+        clone_url=issue.clone_url,
+        base_branch=issue.default_branch,
+        test_command=payload.test_command,
+        test_working_directory=payload.test_working_directory,
+    )
+    workflow_run = WorkflowRun(
+        objective=issue.objective,
+        status=WorkflowRunStatus.Queued,
+        repository_target=target.model_dump(mode="json"),
+        issue_url=issue.issue_url,
+    )
+    db.add(workflow_run)
+    await db.commit()
+
+    enqueue_workflow(workflow_run.id)
+    response.status_code = 202
+    return WorkflowRunResponse.model_validate(workflow_run, from_attributes=True)
 
 
 @router.post("/runs")
@@ -74,14 +113,6 @@ async def list_runs(
     workflow_runs = (
         await db.scalars(select(WorkflowRun).order_by(WorkflowRun.created_at.desc()))
     ).all()
-    if not workflow_runs:
-        raise HTTPException(status_code=404, detail="No workflow run not found.")
-
-    for w in workflow_runs:
-        attrs = {c.key: getattr(w, c.key) for c in inspect(w).mapper.column_attrs}
-        # handles datetime, uuid, and nested json formatting safely
-        print(json.dumps(attrs, default=str, indent=2))
-
     return [
         WorkflowRunResponse.model_validate(workflow_run, from_attributes=True)
         for workflow_run in workflow_runs

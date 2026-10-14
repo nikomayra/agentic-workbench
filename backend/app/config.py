@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     )
     cors_origins: str = "http://localhost:5173"
     openai_api_key: str = ""
+    github_token: str = ""
     redis_url: str = "redis://:workbench@localhost:6379/0"
     managed_workspace_root: Path = (
         Path(__file__).resolve().parents[1] / ".agent_workspaces"

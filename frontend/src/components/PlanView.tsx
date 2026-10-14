@@ -7,30 +7,32 @@ type PlanViewProps = {
 
 const PlanView = ({ plan }: PlanViewProps): ReactNode => {
   return (
-    <>
+    <div>
+      {!plan && <p className="text-sm text-copy-muted">The plan has not been generated yet.</p>}
       {plan && (
-        <>
-          <h2>{plan.summary}</h2>
-          <br />
+        <div>
+          <p className="mb-4 text-sm leading-6 text-zinc-300">{plan.summary}</p>
+          <ol className="space-y-3">
           {plan.steps.map((step, index) => (
-            <div key={index}>
-              <p>
-                <b>
-                  {index + 1}: {step.title}
-                </b>
+            <li key={index} className="rounded-lg border border-line bg-panel-muted p-4">
+              <p className="font-medium">
+                <span className="mr-2 font-mono text-xs text-copy-muted">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                {step.title}
               </p>
-              <p>
-                <b>Description:</b> {step.description}
+              <p className="mt-2 text-sm leading-6 text-copy-muted">
+                {step.description}
               </p>
-              <p>
-                <b>Acceptance Criteria:</b> {step.acceptance_criteria}
+              <p className="mt-3 text-xs font-medium text-zinc-300">
+                Acceptance: {step.acceptance_criteria}
               </p>
-              <br />
-            </div>
+            </li>
           ))}
-        </>
+          </ol>
+        </div>
       )}
-    </>
+    </div>
   );
 };
 

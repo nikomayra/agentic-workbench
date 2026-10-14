@@ -55,6 +55,13 @@ export const WorkflowCreateSchema = z.object({
 });
 export type WorkflowCreate = z.infer<typeof WorkflowCreateSchema>;
 
+export const GitHubWorkflowCreateSchema = z.object({
+  issue_url: z.string(),
+  test_command: z.array(z.string()),
+  test_working_directory: z.string(),
+});
+export type GitHubWorkflowCreate = z.infer<typeof GitHubWorkflowCreateSchema>;
+
 export const FinalApprovalRequestSchema = z.object({
   approved: z.boolean(),
 });

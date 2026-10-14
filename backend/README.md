@@ -19,6 +19,8 @@
 
 The selected repository must define an allowed test command. The bundled fixture uses `backend/` with `uv run pytest -q`; generated worktrees are stored outside the target checkout and are removed at terminal workflow states.
 
+For the GitHub flow, use a fine-grained token with repository **Contents: read/write**, **Issues: read**, and **Pull requests: read/write** permissions. The current clone step supports public HTTPS repositories; the token is used for issue API access, pushing the approved result branch, and creating the draft pull request.
+
 ## Commands
 
 ```bash
@@ -38,3 +40,4 @@ Docker Compose starts PostgreSQL and Redis. During local development, run the AP
 - Workstream paths guide decomposition but do not replace worktree isolation or merge-conflict handling.
 - PostgreSQL is the durable source of workflow state; Redis and SSE must not be treated as persistence.
 - Database state changes and Celery publication are not transactional; a production version should use a transactional outbox to close the commit-before-publish crash window.
+- Git push, draft-PR creation, and the final database commit are separate operations; production retries would need idempotent publication and reconciliation for partial failures.

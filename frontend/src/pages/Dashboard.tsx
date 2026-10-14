@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import ServerStatus from "@/components/ServerStatus";
 import type {
   WorkflowCreate,
+  GitHubWorkflowCreate,
   Workflow,
   Approval,
   ApprovalRejectRequest,
@@ -11,6 +12,7 @@ import { ZodError } from "@/types/types";
 import type { FinalApprovalRequest } from "@/types/types";
 import {
   createWorkflowRun,
+  createGitHubWorkflowRun,
   fetchWorkflowRun,
   fetcAllWorkflowRuns,
   fetchAllWorkflowRunApprovalItems,
@@ -232,23 +234,50 @@ const Dashboard = (): ReactNode => {
     }
   };
 
+  const createGitHubWorkflow = async (
+    payload: GitHubWorkflowCreate,
+  ): Promise<void> => {
+    try {
+      setIsPlanning(true);
+      const workflow = await createGitHubWorkflowRun(payload);
+      setActiveWorkflow(workflow);
+      setApprovals([]);
+      await refreshWorkflowsList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setIsPlanning(false);
+    }
+  };
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:overflow-hidden">
-      <ServerStatus />
-      {error && <p>{error}</p>}
-      {liveUpdateError && <p>{liveUpdateError}</p>}
-      <button
-        onClick={() => refreshActiveWorkflow()}
-        disabled={isRefreshing}
-        className="self-start rounded-lg bg-violet-800 p-2 hover:bg-violet-600 disabled:opacity-50"
-      >
-        {isRefreshing ? "Refreshing..." : "Refresh active Workflow + Approvals"}
-      </button>
+    <div className="flex min-h-0 w-full flex-1 flex-col gap-4 lg:overflow-hidden">
+      <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-panel px-4 py-3 shadow-2xl shadow-black/10">
+        <ServerStatus />
+        <button
+          onClick={() => refreshActiveWorkflow()}
+          disabled={isRefreshing || !activeWorkflow}
+          className="rounded-md border border-line bg-panel-muted px-3 py-1.5 text-sm font-medium transition hover:border-zinc-600 hover:bg-zinc-800 disabled:opacity-40"
+        >
+          {isRefreshing ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="rounded-lg border border-rose-900/70 bg-rose-950/40 px-4 py-3 text-sm text-rose-200">
+          {error}
+        </p>
+      )}
+      {liveUpdateError && (
+        <p className="rounded-lg border border-amber-900/70 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+          {liveUpdateError}
+        </p>
+      )}
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch lg:overflow-hidden">
-        <div className="flex min-h-0 w-full flex-col gap-4 lg:w-80 lg:shrink-0">
+        <div className="flex min-h-0 w-full flex-col gap-4 lg:w-[23rem] lg:shrink-0">
           <NewWorkflowForm
             createWorkflow={createWorkflow}
+            createGitHubWorkflow={createGitHubWorkflow}
             isPlanning={isPlanning}
           />
           <WorkflowsList

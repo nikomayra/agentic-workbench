@@ -118,6 +118,21 @@ class WorkflowRunCreate(BaseModel):
     repository_target: RepositoryTarget
 
 
+class GitHubWorkflowRunCreate(BaseModel):
+    issue_url: str = Field(min_length=1)
+    test_command: list[str] = Field(min_length=1)
+    test_working_directory: str = "."
+
+    @model_validator(mode="after")
+    def validate_test_configuration(self) -> GitHubWorkflowRunCreate:
+        RepositoryTarget(
+            clone_url="https://github.com/example/repository.git",
+            test_command=self.test_command,
+            test_working_directory=self.test_working_directory,
+        )
+        return self
+
+
 class FinalApprovalRequest(BaseModel):
     approved: bool
 
