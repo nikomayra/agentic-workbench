@@ -100,7 +100,7 @@ export const fetchWorkflowRun = async (run_id: string): Promise<Workflow> => {
   return WorkflowResponseSchema.parse(data);
 };
 
-export const fetcAllWorkflowRuns = async (): Promise<Workflow[]> => {
+export const fetchAllWorkflowRuns = async (): Promise<Workflow[]> => {
   const response = await fetch(`${BASE_URL}/runs`);
 
   if (!response.ok) {

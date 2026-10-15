@@ -41,7 +41,7 @@ from app.schemas.schemas import (
     Workstream,
 )
 
-MAX_REVIEW_FIX_CYCLES = 1
+MAX_REVIEW_FIX_CYCLES = 3
 
 
 def prepare_work(
@@ -76,6 +76,7 @@ def prepare_work(
 async def execute_new_work(
     work_records: list[WorkRecord],
     workspace: RepositoryWorkspace,
+    original_requirement: str = "",
 ) -> list[WorkRecord]:
     """Execute every newly prepared work record concurrently."""
     tasks_by_work_id: dict[uuid.UUID, asyncio.Task[WorkExecution]] = {}
@@ -85,7 +86,10 @@ async def execute_new_work(
             if work.work_execution is not None:
                 raise RuntimeError("New work cannot already have an execution.")
 
-            worker_input = WorkerInput(workstream=work.workstream)
+            worker_input = WorkerInput(
+                original_requirement=original_requirement,
+                workstream=work.workstream,
+            )
             tasks_by_work_id[work.work_id] = group.create_task(
                 invoke_worker(work.worktree.path, workspace.target, worker_input),
                 name=str(work.work_id),
@@ -200,7 +204,11 @@ async def advance_until_pause(
                 state = _merge_worktrees_into_integration(state)
 
             case CoordinatorStages.MERGE_CONFLICT:
-                state = await start_merge_conflict_repair(state, workspace)
+                state = await start_merge_conflict_repair(
+                    state,
+                    workspace,
+                    plan.original_requirement,
+                )
 
             case CoordinatorStages.MERGE_REPAIR_COMPLETED:
                 state = _state_from_merge_repair_completed(state)
@@ -217,7 +225,11 @@ async def advance_until_pause(
                 state = await _review_integration_worktree(plan, state, workspace)
 
             case CoordinatorStages.REVIEW_FINDINGS:
-                state = await start_attempt_fix_review_findings(state, workspace)
+                state = await start_attempt_fix_review_findings(
+                    state,
+                    workspace,
+                    plan.original_requirement,
+                )
 
             case CoordinatorStages.REVIEW_FIX_COMPLETED:
                 state = _state_from_review_findings_fix_completed(state)
@@ -251,6 +263,7 @@ async def _review_integration_worktree(
     ]
 
     review_input = ReviewInput(
+        original_requirement=plan.original_requirement,
         original_plan=plan,
         executed_workstreams=[
             work_record.workstream for work_record in state.work_records
@@ -316,7 +329,11 @@ def _state_from_review_findings_fix_completed(
         f"Review findings fix completed: {state.review_findings.review_output.repair_task[:200]}",
     )
     if not commit_outcome.committed or not commit_outcome.commit_hash:
-        raise RuntimeError("Completed review fix did not produce a commit.")
+        worker_notes = state.review_findings.fix_execution.output.work_notes
+        raise RuntimeError(
+            "Review repair produced no changes to commit. "
+            f"Worker report: {worker_notes}"
+        )
 
     return CoordinatorExecution(
         stage=CoordinatorStages.INTEGRATED,
@@ -356,6 +373,7 @@ def _state_from_fix_review_findings_attempt(
 async def start_attempt_fix_review_findings(
     state: CoordinatorExecution,
     workspace: RepositoryWorkspace,
+    original_requirement: str = "",
 ) -> CoordinatorExecution:
 
     if not state.review_findings or state.stage != CoordinatorStages.REVIEW_FINDINGS:
@@ -365,7 +383,9 @@ async def start_attempt_fix_review_findings(
         state.review_findings
         and state.review_findings.fix_attempts >= MAX_REVIEW_FIX_CYCLES
     ):
-        raise RuntimeError("Exceeded max allowed review fix attempts.")
+        last_finding = state.review_findings.review_output.repair_task
+        detail = f" Last review: {last_finding}" if last_finding else ""
+        raise RuntimeError(f"Exceeded max allowed review fix attempts.{detail}")
 
     if not state.integration_worktree:
         raise RuntimeError(
@@ -387,7 +407,10 @@ async def start_attempt_fix_review_findings(
     repair_execution = await invoke_worker(
         state.integration_worktree.path,
         workspace.target,
-        WorkerInput(workstream=repair_assignment),
+        WorkerInput(
+            original_requirement=original_requirement,
+            workstream=repair_assignment,
+        ),
     )
 
     return _state_from_fix_review_findings_attempt(state, repair_execution)
@@ -487,18 +510,27 @@ async def start_coordinator(
         workspace.target,
         plan,
     )
-    initial_state = await _start_work(execution_plan, workspace)
+    initial_state = await _start_work(
+        execution_plan,
+        workspace,
+        plan.original_requirement,
+    )
     return await advance_until_pause(plan, initial_state, workspace)
 
 
 async def _start_work(
     execution_plan: ExecutionPlan,
     workspace: RepositoryWorkspace,
+    original_requirement: str = "",
 ) -> CoordinatorExecution:
     prepared_work = prepare_work(execution_plan, workspace)
 
     try:
-        executed_work = await execute_new_work(prepared_work, workspace)
+        executed_work = await execute_new_work(
+            prepared_work,
+            workspace,
+            original_requirement,
+        )
         return _state_from_work_results(executed_work)
     except Exception as exc:
         for work in reversed(prepared_work):
@@ -675,6 +707,7 @@ def _state_from_merge_repair_result(
 async def start_merge_conflict_repair(
     state: CoordinatorExecution,
     workspace: RepositoryWorkspace,
+    original_requirement: str = "",
 ) -> CoordinatorExecution:
     """Start an agent repair for the active conflict in the integration tree."""
 
@@ -719,7 +752,10 @@ async def start_merge_conflict_repair(
     repair_execution = await invoke_worker(
         state.integration_worktree.path,
         workspace.target,
-        WorkerInput(workstream=repair_assignment),
+        WorkerInput(
+            original_requirement=original_requirement,
+            workstream=repair_assignment,
+        ),
     )
     return _state_from_merge_repair_result(state, repair_execution)
 

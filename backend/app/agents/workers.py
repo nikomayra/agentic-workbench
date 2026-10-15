@@ -40,6 +40,7 @@ class WorkerOutput(BaseModel):
 class WorkerInput(BaseModel):
     """The approved requirements and one worker's assigned portion of them."""
 
+    original_requirement: str = ""
     workstream: Workstream
 
 
@@ -64,6 +65,8 @@ def make_worker(trusted_root: Path, target: RepositoryTarget) -> Agent:
             "repository workspace before editing. Implement only the supplied "
             "work assignment, follow its approved plan, acceptance criteria, "
             "shared contracts, and review feedback, and keep changes focused. "
+            "Use original_requirement as the source of truth for exact text or "
+            "other details omitted by a summarized workstream. "
             "Return concise work notes describing the result."
         ),
         model="gpt-5.6-luna",

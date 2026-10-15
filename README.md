@@ -83,8 +83,10 @@ Workflow state is persisted independently of model conversations. FastAPI create
 
 ### Requirements
 
+- Python 3.14 with `uv`
+- Node.js 24 with npm
 - Docker with Compose
-- Git
+- Git and `rg` (ripgrep)
 - OpenAI API key
 - GitHub token for issue and draft-PR integration
 
@@ -92,12 +94,33 @@ Workflow state is persisted independently of model conversations. FastAPI create
 git clone https://github.com/nikomayra/agentic-workbench.git
 cd agentic-workbench
 cp .env.example .env
-docker compose up --build
-docker compose exec backend uv run alembic upgrade head
+docker compose up -d
+
+cd backend
+uv sync
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload --reload-dir app
+```
+
+In a second terminal, start the durable workflow worker:
+
+```bash
+cd backend
+uv run celery -A app.tasks.celery_app:celery_app worker --beat --loglevel=INFO --pool=solo
+```
+
+In a third terminal, start the dashboard:
+
+```bash
+cd frontend
+npm ci
+npm run dev
 ```
 
 - Frontend: `http://localhost:5173`
 - API documentation: `http://localhost:8000/docs`
+
+Submit a public GitHub issue URL, approve the generated plan and guarded edits, then approve the final result. A successful run exposes the resulting draft pull-request link in the selected-workflow panel.
 
 For backend-only development and environment assumptions, see [`backend/README.md`](backend/README.md).
 
@@ -126,5 +149,6 @@ The full workflow used about **2.4× the tokens** and **2.7× the latency** of t
 
 - The current benchmark contains five small tasks and one run per configuration, so its 100% pass rate is a functional checkpoint—not a statistically reliable success rate.
 - Deterministic scoring verifies workflow completion, tests, and changed-file boundaries; it does not yet measure maintainability, requirement completeness, or whether multi-agent decomposition produces better code.
+- The dashboard exposes workflow state, approvals, plans, errors, and final links; raw diffs, test logs, and traces remain developer-facing artifacts rather than a full observability UI.
 - The full workflow remains the product's explicit, review-oriented path. Automatically routing simple tasks to a single worker is deferred until repeated evals and a quality rubric show that a routing step would improve the cost/quality tradeoff.
 - Repository execution is intentionally limited to managed GitHub checkouts and allowlisted test commands. Arbitrary local paths and unrestricted shell access are outside the project scope.

@@ -20,12 +20,14 @@ from app.orchestration.coordinator import (
     finalize_coordinator,
     resume_coordinator,
     resume_merge_conflict_repair,
+    start_attempt_fix_review_findings,
     start_merge_conflict_repair,
 )
 from app.orchestration.state import (
     CoordinatorExecution,
     CoordinatorStages,
     MergeConflict,
+    ReviewFindings,
     WorkRecordStatus,
 )
 from app.orchestration.worktrees import MergeOutcome, Worktree
@@ -314,6 +316,49 @@ def test_failed_tests_cannot_reach_final_approval(monkeypatch):
     assert result.stage == CoordinatorStages.REVIEW_FINDINGS
     assert result.review_findings is not None
     assert result.review_findings.review_output.status == ReviewStatus.CHANGES_REQUIRED
+
+
+def test_review_repair_receives_original_requirement(monkeypatch):
+    received_inputs = []
+    state = CoordinatorExecution(
+        stage=CoordinatorStages.REVIEW_FINDINGS,
+        work_records=[completed_work_record("docs")],
+        integration_worktree=Worktree(
+            id="integration",
+            branch="worker/integration",
+            path=Path("/tmp/integration"),
+        ),
+        review_findings=ReviewFindings(
+            review_output=ReviewOutput(
+                status=ReviewStatus.CHANGES_REQUIRED,
+                repair_task="Append the exact requested text.",
+                affected_paths=["README.md"],
+                acceptance_criteria=["The exact text is present."],
+            )
+        ),
+    )
+
+    async def fake_invoke_worker(_root, _target, worker_input):
+        received_inputs.append(worker_input)
+        return WorkExecution(
+            status=WorkExecutionStatus.COMPLETED,
+            output=WorkerOutput(work_notes="Updated README.md"),
+        )
+
+    monkeypatch.setattr(coordinator_module, "invoke_worker", fake_invoke_worker)
+
+    result = asyncio.run(
+        start_attempt_fix_review_findings(
+            state,
+            sample_repository_workspace(),
+            "Append the literal sentence: Exact smoke-test text.",
+        )
+    )
+
+    assert result.stage == CoordinatorStages.REVIEW_FIX_COMPLETED
+    assert received_inputs[0].original_requirement == (
+        "Append the literal sentence: Exact smoke-test text."
+    )
 
 
 def test_dispatcher_stops_at_final_approval():

@@ -13,8 +13,13 @@ const WorkflowsList = ({
   isLoading,
 }: WorkflowsListProps): ReactNode => {
   return (
-    <section className="w-full overflow-x-hidden rounded-xl border border-line bg-panel p-4 shadow-2xl shadow-black/10 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+    <section className="w-full overflow-x-hidden rounded-xl border border-line bg-panel p-4 shadow-2xl shadow-black/10 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
       <h2 className="mb-3 font-semibold tracking-tight">Recent workflows</h2>
+      {workflows && workflows.length === 0 && (
+        <p className="rounded-lg border border-dashed border-line p-4 text-sm text-copy-muted">
+          No workflows yet.
+        </p>
+      )}
       {workflows && workflows.length > 0 && (
         <div className="flex flex-col gap-2">
           {workflows.map((workflow) => (

@@ -4,7 +4,7 @@ import Dashboard from "@/pages/Dashboard";
 
 function App() {
   return (
-    <main className="flex min-h-screen flex-col text-copy lg:h-screen lg:overflow-hidden">
+    <main className="flex h-screen flex-col overflow-hidden text-copy">
       <header className="shrink-0 border-b border-line bg-canvas/80 px-5 py-4 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1800px] items-end justify-between gap-4">
           <div>

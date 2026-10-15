@@ -45,7 +45,9 @@ async def invoke_planner(
     except Exception as exc:
         raise PlannerError("Planner could not produce a plan") from exc
 
-    return result.final_output
+    return result.final_output.model_copy(
+        update={"original_requirement": objective}
+    )
 
 
 def make_decomposer(mcp_server: MCPServerStdio) -> Agent:

@@ -26,7 +26,7 @@ For the GitHub flow, use a fine-grained token with repository **Contents: read/w
 ```bash
 uv sync
 uv run alembic upgrade head
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload --reload-dir app
 uv run celery -A app.tasks.celery_app:celery_app worker --beat --loglevel=INFO --pool=solo
 uv run pytest
 uv run ruff check .

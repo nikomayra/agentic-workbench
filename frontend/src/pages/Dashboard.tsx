@@ -14,7 +14,7 @@ import {
   createWorkflowRun,
   createGitHubWorkflowRun,
   fetchWorkflowRun,
-  fetcAllWorkflowRuns,
+  fetchAllWorkflowRuns,
   fetchAllWorkflowRunApprovalItems,
   approveApprovalItem,
   rejectApprovalItem,
@@ -26,6 +26,7 @@ import ApprovalsList from "@/components/ApprovalsList";
 import NewWorkflowForm from "@/components/NewWorkflowForm";
 import WorkflowsList from "@/components/WorkflowsList";
 import WorkflowView from "@/components/WorkflowView";
+import HelpDialog from "@/components/HelpDialog";
 
 const Dashboard = (): ReactNode => {
   const [Workflows, setWorkflows] = useState<Workflow[] | null>(null);
@@ -66,7 +67,7 @@ const Dashboard = (): ReactNode => {
 
   const refreshWorkflowsList = async (): Promise<void> => {
     try {
-      const allWorkflowRuns = await fetcAllWorkflowRuns();
+      const allWorkflowRuns = await fetchAllWorkflowRuns();
       setWorkflows(allWorkflowRuns);
     } catch (err) {
       if (err instanceof ZodError) {
@@ -78,7 +79,7 @@ const Dashboard = (): ReactNode => {
   };
 
   useEffect(() => {
-    void fetcAllWorkflowRuns()
+    void fetchAllWorkflowRuns()
       .then(setWorkflows)
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Unknown error");
@@ -251,19 +252,25 @@ const Dashboard = (): ReactNode => {
   };
 
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col gap-4 lg:overflow-hidden">
+    <div className="flex min-h-0 w-full flex-1 flex-col gap-4 overflow-hidden">
       <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-panel px-4 py-3 shadow-2xl shadow-black/10">
         <ServerStatus />
-        <button
-          onClick={() => refreshActiveWorkflow()}
-          disabled={isRefreshing || !activeWorkflow}
-          className="rounded-md border border-line bg-panel-muted px-3 py-1.5 text-sm font-medium transition hover:border-zinc-600 hover:bg-zinc-800 disabled:opacity-40"
-        >
-          {isRefreshing ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="flex items-center gap-2">
+          <HelpDialog />
+          <button
+            onClick={() => refreshActiveWorkflow()}
+            disabled={isRefreshing || !activeWorkflow}
+            className="rounded-md border border-line bg-panel-muted px-3 py-1.5 text-sm font-medium transition hover:border-zinc-600 hover:bg-zinc-800 disabled:opacity-40"
+          >
+            {isRefreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </div>
       {error && (
-        <p role="alert" className="rounded-lg border border-rose-900/70 bg-rose-950/40 px-4 py-3 text-sm text-rose-200">
+        <p
+          role="alert"
+          className="rounded-lg border border-rose-900/70 bg-rose-950/40 px-4 py-3 text-sm text-rose-200"
+        >
           {error}
         </p>
       )}
@@ -273,12 +280,21 @@ const Dashboard = (): ReactNode => {
         </p>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch lg:overflow-hidden">
-        <div className="flex min-h-0 w-full flex-col gap-4 lg:w-[23rem] lg:shrink-0">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto xl:grid-cols-[23rem_minmax(0,1fr)_24rem] xl:overflow-hidden">
+        <div className="min-w-0 xl:flex xl:min-h-0 xl:overflow-hidden">
           <NewWorkflowForm
             createWorkflow={createWorkflow}
             createGitHubWorkflow={createGitHubWorkflow}
             isPlanning={isPlanning}
+          />
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-4 xl:grid xl:min-h-0 xl:grid-rows-[minmax(20rem,2fr)_minmax(12rem,1fr)] xl:overflow-hidden">
+          <WorkflowView
+            workflow={activeWorkflow}
+            approveWorkflowPlan={approveWorkflowPlan}
+            finalizeWorkflow={finalizeWorkflow}
+            isDeciding={isDeciding}
           />
           <WorkflowsList
             workflows={Workflows}
@@ -287,16 +303,7 @@ const Dashboard = (): ReactNode => {
           />
         </div>
 
-        <div className="min-w-0 w-full lg:flex lg:min-h-0 lg:flex-1 lg:overflow-hidden">
-          <WorkflowView
-            workflow={activeWorkflow}
-            approveWorkflowPlan={approveWorkflowPlan}
-            finalizeWorkflow={finalizeWorkflow}
-            isDeciding={isDeciding}
-          />
-        </div>
-
-        <div className="min-w-0 w-full lg:flex lg:min-h-0 lg:w-96 lg:shrink-0 lg:overflow-hidden">
+        <div className="min-w-0 xl:flex xl:min-h-0 xl:overflow-hidden">
           <ApprovalsList
             approvals={approvals}
             approve={approveApproval}

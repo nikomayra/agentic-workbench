@@ -28,6 +28,7 @@ class Workstream(BaseModel):
 class Plan(BaseModel):
     summary: str
     steps: list[PlanStep]
+    original_requirement: str = ""
 
 
 class ExecutionPlan(BaseModel):
@@ -37,6 +38,7 @@ class ExecutionPlan(BaseModel):
 
 
 class ReviewInput(BaseModel):
+    original_requirement: str = ""
     original_plan: Plan
     executed_workstreams: list[Workstream]
     implementation_notes: str

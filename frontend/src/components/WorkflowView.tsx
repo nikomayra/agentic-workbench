@@ -2,6 +2,19 @@ import type { ReactNode } from "react";
 import type { Workflow, FinalApprovalRequest } from "@/types/types";
 import PlanView from "@/components/PlanView";
 
+const statusDescriptions: Record<Workflow["status"], string> = {
+  cancelled: "The workflow was cancelled.",
+  processing: "Agents are implementing, testing, or reviewing the result.",
+  pending_plan_approval:
+    "Review the proposed plan before implementation starts.",
+  queued: "The workflow is waiting for a background worker.",
+  pending_tool_approval: "Review the requested file edits to continue.",
+  pending_final_approval:
+    "Tests and independent review passed. Approve to publish the result.",
+  completed: "The workflow completed successfully.",
+  failed: "The workflow stopped before publication. See the error below.",
+};
+
 type WorkflowViewProps = {
   workflow: Workflow | null;
   approveWorkflowPlan: (runId: string) => Promise<void>;
@@ -51,7 +64,7 @@ const WorkflowView = ({
   };
 
   return (
-    <section className="flex min-w-0 w-full flex-col rounded-xl border border-line bg-panel p-5 shadow-2xl shadow-black/10 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+    <section className="flex min-w-0 w-full flex-col rounded-xl border border-line bg-panel p-5 shadow-2xl shadow-black/10 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
       {!workflow && (
         <div className="m-auto max-w-sm text-center">
           <p className="font-medium">No workflow selected</p>
@@ -68,13 +81,18 @@ const WorkflowView = ({
                 <p className="text-xs font-medium tracking-wide text-copy-muted uppercase">
                   Active workflow
                 </p>
-                <p className="mt-1 font-mono text-xs text-copy-muted">{workflow.id}</p>
+                <p className="mt-1 font-mono text-xs text-copy-muted">
+                  {workflow.id}
+                </p>
               </div>
               <span className="rounded-full border border-line bg-panel-muted px-2.5 py-1 text-xs font-medium capitalize">
                 {workflow.status.replaceAll("_", " ")}
               </span>
             </div>
-            <h2 className="text-xl font-semibold tracking-tight whitespace-pre-wrap">
+            <p className="mb-4 text-sm text-copy-muted">
+              {statusDescriptions[workflow.status]}
+            </p>
+            <h2 className="text-l font-semibold tracking-tight whitespace-pre-wrap">
               {workflow.objective}
             </h2>
             {workflow.issue_url && (

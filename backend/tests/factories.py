@@ -50,6 +50,7 @@ def sample_repository_workspace() -> RepositoryWorkspace:
 def sample_plan() -> Plan:
     return Plan(
         summary="Make the requested change.",
+        original_requirement="Preserve this exact requirement.",
         steps=[
             PlanStep(
                 title="Implement change",

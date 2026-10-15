@@ -15,16 +15,22 @@ const ApprovalsList = ({
   reject,
   isDeciding,
 }: ApprovalsListProps): ReactNode => {
-  const [rejectMsg, setRejectMsg] = useState<string | undefined>();
+  const [rejectMessages, setRejectMessages] = useState<Record<string, string>>(
+    {},
+  );
 
   const handleChange = (
+    approvalId: string,
     e: React.ChangeEvent<HTMLTextAreaElement, HTMLTextAreaElement>,
   ) => {
-    setRejectMsg(e.target.value);
+    setRejectMessages((current) => ({
+      ...current,
+      [approvalId]: e.target.value,
+    }));
   };
 
   return (
-    <section className="flex min-w-0 w-full flex-col gap-3 rounded-xl border border-line bg-panel p-4 shadow-2xl shadow-black/10 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+    <section className="flex min-w-0 w-full flex-col gap-3 rounded-xl border border-line bg-panel p-4 shadow-2xl shadow-black/10 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
       <div>
         <h2 className="font-semibold tracking-tight">Tool approvals</h2>
         <p className="mt-1 text-sm text-copy-muted">
@@ -60,8 +66,8 @@ const ApprovalsList = ({
               {approval.decision === "pending" && (
                 <div className="flex flex-col gap-2">
                   <textarea
-                    onChange={handleChange}
-                    value={rejectMsg}
+                    onChange={(event) => handleChange(approval.id, event)}
+                    value={rejectMessages[approval.id] ?? ""}
                     placeholder="Optional rejection guidance"
                     className="min-h-20 rounded-md border border-line bg-canvas p-2 text-sm outline-none focus:border-zinc-500"
                   />
@@ -74,7 +80,9 @@ const ApprovalsList = ({
                       {isDeciding ? "Approving..." : "Approve"}
                     </button>
                     <button
-                      onClick={() => reject(approval.id, rejectMsg)}
+                      onClick={() =>
+                        reject(approval.id, rejectMessages[approval.id])
+                      }
                       className="flex-1 rounded-md border border-rose-800 px-3 py-2 text-sm font-medium text-rose-200 hover:bg-rose-950"
                       disabled={isDeciding}
                     >

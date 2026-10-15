@@ -531,7 +531,7 @@ Build:
 
 ---
 
-## Phase 9 — Productization
+## (COMPLETED) Phase 9 — Productization
 
 Finish the project as a credible, reusable engineering demo—not a startup product.
 
@@ -553,7 +553,7 @@ GitHub issue URL
 
 Keep GitHub API/authentication logic behind one small service boundary. Do not add profiles, teams, workflow-template builders, or a general model-selection UI.
 
-### 3. Add professional finishing evidence
+### (COMPLETED) 3. Add professional finishing evidence
 
 * GitHub Actions for backend tests/Ruff and frontend lint/test/build
 * A focused frontend polish pass using established components such as shadcn/ui
