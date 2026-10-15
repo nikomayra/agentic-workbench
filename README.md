@@ -1,3 +1,4 @@
+
 # Agentic Workbench
 
 A human-governed, multi-agent software-engineering platform that turns an objective or GitHub issue into a planned, tested, independently reviewed code change and draft pull request.
@@ -6,7 +7,7 @@ It combines LLM judgment with deterministic orchestration: agents plan, implemen
 
 ## Interface
 
-<img width="900" alt="AW" src="https://github.com/user-attachments/assets/255767c5-77ee-4703-babe-901ea5cc4102" />
+<img width="960" alt="AW" src="https://github.com/user-attachments/assets/651ee2ab-4fcf-429a-816c-128cb6d774c5" />
 
 ## Workflow
 
